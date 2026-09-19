@@ -57,8 +57,12 @@ function curvature(H, w, h, x, z, r) {
 }
 
 export class Terrain {
-  constructor(map, { shadows = true, texture = true, relief = 1, quality = 'fast' } = {}) {
-    this.relief = relief; this.quality = quality;
+  // `lod` is the headset budget: tiles drop detail with distance and vanish past the fog. The
+  // editor turns it off. It runs on a desktop GPU with a whole frame to itself, nobody is wearing
+  // it, and the entire job is looking closely at the shape of the ground -- reviewing a mountain
+  // through the same decimation you ship to a Quest is reviewing the wrong mountain.
+  constructor(map, { shadows = true, texture = true, relief = 1, quality = 'fast', lod = true } = {}) {
+    this.relief = relief; this.quality = quality; this.lod = lod;
     this.map = map;
     this.material = new THREE.MeshStandardMaterial({
       vertexColors: true, metalness: 0.0,
@@ -94,7 +98,8 @@ export class Terrain {
     // Measured from the tile's NEAR EDGE, so a 144 m tile qualifies for full detail while its
     // centre is still 142 m away -- which is why these look closer than they play. At [90,...]
     // twenty-one tiles sat at full detail and that alone was 97,000 triangles.
-    this.LOD_D = [40, 200, 430]; this.drawDistance = 1500;
+    this.LOD_D = lod ? [40, 200, 430] : [Infinity, Infinity, Infinity];
+    this.drawDistance = lod ? 1500 : Infinity;
     this.chunks = [];
     this.mesh = new THREE.Group();
     this.mesh.name = 'terrain';
@@ -121,7 +126,9 @@ export class Terrain {
     // resubmits every triangle of it: at a square kilometre that is 230k triangles drawn twice a
     // frame, on a headset. Past that size the relief shading and the trees carry it instead.
     const cells = this.map.size.w * this.map.size.h;
-    this.selfShadow = shadows && cells < 90000;
+    // The hill shades itself in the editor whatever its size -- the reason that is off on a big
+    // map is a shadow pass resubmitting every triangle on a headset, which is not this.
+    this.selfShadow = shadows && (!lod || cells < 90000);
     this.colorMode = 'snow';   // 'snow' | 'slope' (editor overlay: steepness bands)
     this.rebuild();
   }
@@ -192,7 +199,7 @@ export class Terrain {
   // frustum test itself is left to three.js, which does it per eye with the camera that is
   // actually rendering -- doing it here with the app camera would be wrong inside XR.
   update(viewerPos) {
-    if (!viewerPos) return;
+    if (!viewerPos || !this.lod) return;
     for (const c of this.chunks) {
       const d = Math.max(0, Math.hypot(viewerPos.x - c.cx, viewerPos.z - c.cz) - c.radius);
       if (d > this.drawDistance) { c.mesh.visible = false; continue; }
@@ -303,7 +310,7 @@ export class Terrain {
     const DEEP = low - 70;
     // Every third border vertex, not every one. At full density this was 16,260 triangles for a
     // slope you only ever see past the edge of the map, which was more than the trees.
-    const STEP = 3;
+    const STEP = this.lod ? 3 : 1;
     const edge = [];
     for (let x = 0; x < w; x += STEP) edge.push([x, 0]);
     for (let z = STEP; z < h; z += STEP) edge.push([w - 1, z]);
@@ -312,7 +319,7 @@ export class Terrain {
     edge.push([0, 0]);
     const n = edge.length;
     // Three rows: a snow lip, then rock that darkens as it falls away.
-    const rows = 5, vcount = n * rows;
+    const rows = this.lod ? 5 : 7, vcount = n * rows;
     const pos = new Float32Array(vcount * 3), col = new Float32Array(vcount * 3), uv = new Float32Array(vcount * 2);
     const tint = (t, i, jitter) => {
       // t = 0 at the lip, 1 at the bottom.

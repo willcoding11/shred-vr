@@ -188,10 +188,11 @@ export function propGeometries(quality = 'fast') {
 // distance (it already exists, and at a hundred and fifty metres it is indistinguishable), and a
 // cone on a stick beyond that. Rebuilt only when the viewer has actually moved.
 const TIER_NEAR = 110, TIER_MID = 280, TIER_FAR = 520, TIER_PROP = 460;
+const _ORIGIN = new THREE.Vector3();
 
 export class PropRenderer {
-  constructor(map, { shadows = true, quality = 'fast' } = {}) {
-    this.map = map; this.shadows = shadows; this.quality = quality;
+  constructor(map, { shadows = true, quality = 'fast', lod = true } = {}) {
+    this.map = map; this.shadows = shadows; this.quality = quality; this.lod = lod;
     this.group = new THREE.Group(); this.group.name = 'props';
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
@@ -223,7 +224,8 @@ export class PropRenderer {
       if (!PROP_TYPES[p.t]) continue;
       const tree = p.t === 'pine' || p.t === 'fir' || p.t === 'birch';
       const near = this.geoKey(p, p.t === 'gate' ? gi++ : 0);
-      const keys = tree ? [near, p.t + '@mid', p.t + '@far'] : [near];
+      // With lod off there is only ever the full mesh, so the cheaper tiers are not even built.
+      const keys = tree && this.lod ? [near, p.t + '@mid', p.t + '@far'] : [near];
       const s = p.s || 1;
       const y = heightAt(this.map, p.x, p.z) - 0.05 - (tree ? 0.30 * s : 0);
       tmpP.set(p.x, y, p.z);
@@ -271,24 +273,35 @@ export class PropRenderer {
       this.group.add(m); this.meshes[key] = m;
     }
     this._last.set(1e9, 1e9, 1e9);
-    this.cull(this._viewer || new THREE.Vector3());
+    this._placed = false;
+    this.cull(this._viewer, true);
   }
 
   // Which props draw, and at which tier. Cheap enough to call every frame, but it only does the
   // work when the viewer has moved far enough for an answer to have changed.
   cull(viewerPos, force = false) {
-    if (!viewerPos) return;
-    this._viewer = this._viewer || new THREE.Vector3();
-    this._viewer.copy(viewerPos);
-    if (!force && this._last.distanceToSquared(viewerPos) < 144) return;   // 12 m
-    this._last.copy(viewerPos);
+    // With lod off nothing depends on where you are, so this runs once after a sync and then
+    // never again -- and it does not need a viewer position at all, which is how the editor
+    // calls it.
+    if (!this.lod) {
+      if (this._placed && !force) return;
+      this._placed = true;
+      viewerPos = _ORIGIN;
+    } else {
+      if (!viewerPos) return;
+      this._viewer = this._viewer || new THREE.Vector3();
+      this._viewer.copy(viewerPos);
+      if (!force && this._last.distanceToSquared(viewerPos) < 144) return;   // 12 m
+      this._last.copy(viewerPos);
+    }
     const counts = {};
     for (const m of Object.values(this.meshes)) counts[m.name.slice(5)] = 0;
     const vx = viewerPos.x, vz = viewerPos.z;
     for (const it of this.items) {
       const d = Math.hypot(it.x - vx, it.z - vz);
       let key;
-      if (it.keys.length === 1) { if (d > TIER_PROP) continue; key = it.keys[0]; }
+      if (!this.lod) key = it.keys[0];
+      else if (it.keys.length === 1) { if (d > TIER_PROP) continue; key = it.keys[0]; }
       else if (d < TIER_NEAR) key = it.keys[0];
       else if (d < TIER_MID) key = it.keys[1];
       else if (d < TIER_FAR) key = it.keys[2];

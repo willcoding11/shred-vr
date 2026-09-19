@@ -40,6 +40,14 @@ const state = {
 };
 
 const view = new Viewport($('view'), $('minimap'));
+// Same reason the game has shredRefs: checking a claim about what is on screen beats squinting.
+window.shredEditor = () => ({ view, state,
+  detail: view.terrain ? {
+    lod: view.terrain.lod, tiles: view.terrain.chunks.length,
+    tilesAtFullDetail: view.terrain.chunks.filter((c) => c.lod === 0 && c.mesh.visible).length,
+    draws: view.renderer.info.render.calls, tris: view.renderer.info.render.triangles,
+    propMeshes: view.props ? view.props.group.children.map((m) => m.name + 'x' + m.count).filter((n) => !n.endsWith('x0')) : [],
+  } : null });
 function showHint(t) { $('hint').textContent = t; }
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.liftFrom) { state.liftFrom = null; view.showLiftDraft(null); showHint(TOOLS.lift.hint); }

@@ -65,9 +65,9 @@ export class Viewport {
 
   setMap(map, { keepCamera = false } = {}) {
     this.map = map;
-    if (!this.terrain) { this.terrain = new Terrain(map, { shadows: true }); this.scene.add(this.terrain.mesh); }
+    if (!this.terrain) { this.terrain = new Terrain(map, { shadows: true, lod: false }); this.scene.add(this.terrain.mesh); }
     else this.terrain.setMap(map);
-    if (!this.props) { this.props = new PropRenderer(map, { shadows: true }); this.scene.add(this.props.group); }
+    if (!this.props) { this.props = new PropRenderer(map, { shadows: true, lod: false }); this.scene.add(this.props.group); }
     else this.props.setMap(map);
     this.refreshMarkers();
     this.refreshLifts();
@@ -332,10 +332,12 @@ export class Viewport {
     // The editor orbits a target rather than standing somewhere, so the tiles are chosen from the
     // camera. Without this the terrain would draw every tile at full detail, which is what it did
     // before it was tiled at all.
-    this.terrain?.update(this.camera.position);
-    this.props?.cull(this.camera.position);
-    // The editor never ran the lifts, so their chairs sat in a pile at the world origin.
-    this.lifts?.update(dt, this.camera.position);
+    // No viewer position on any of these: the editor draws the whole map, every tree at full
+    // detail and every chair on the cable. The distance work they all do is the headset budget.
+    this.terrain?.update();
+    this.props?.cull();
+    // The editor never ran the lifts at all, so their chairs sat in a pile at the world origin.
+    this.lifts?.update(dt);
     this.scenery.update(dt, this.controls.target, this.camera);
     this.renderer.render(this.scene, this.camera);
   }

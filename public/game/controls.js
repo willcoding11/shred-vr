@@ -9,6 +9,7 @@
 // One consequence worth knowing: the board ends up at hand height, so the snow surface is at
 // hand height too, and your head sits only ~0.8 m above it. That closeness is the point.
 import * as THREE from 'three';
+import { boardFrame, rollOf, combineRoll, upFromRoll, applyGain } from '../shared/boardpose.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
 const _rawVel = new THREE.Vector3();
@@ -40,6 +41,7 @@ export class BoardControls {
     this.pose = new BoardPose();          // smoothed, what the physics reads
     this.rawPose = new BoardPose();       // this frame, unsmoothed
     this.calib = null;
+    this._tmp4 = new THREE.Vector3(); this._tmp5 = new THREE.Vector3();
     this.handVel = new THREE.Vector3();   // centroid velocity of the two hands (rig space)
     this.stanceWidth = 0.5;
     this.sources = [];
@@ -174,30 +176,22 @@ export class BoardControls {
     nose.multiplyScalar(1 / len);
     raw.nose.copy(nose);
 
-    // Roll about that axis: average what each wrist has done since calibration.
-    const up = this._tmp2.set(0, 0, 0);
+    // Roll about that axis: average what each wrist has done since calibration. The awkward part
+    // of this -- and it is genuinely awkward, see the module -- lives in boardpose.js.
+    const { flat, ref } = boardFrame(nose, this._tmp2, this._tmp4);
+    let ang = 0;
     if (this.calib) {
+      let a0 = null, a1 = null;
       for (let i = 0; i < 2; i++) {
         this._tmp3.copy(this.calib.localUp[i]).applyQuaternion(this.hands[i].quat);
-        up.add(this._tmp3);
+        const aa = rollOf(nose, this._tmp3, flat, ref);
+        if (i === 0) a0 = aa; else a1 = aa;
       }
-      up.multiplyScalar(0.5);
-    } else up.copy(Y);
-    up.addScaledVector(nose, -up.dot(nose));
-    if (up.lengthSq() < 1e-6) up.copy(Y).addScaledVector(nose, -Y.dot(nose));
-    up.normalize();
-    // optional gain: >1 turns a small wrist roll into a bigger edge angle
-    const g = this.settings.rollGain;
-    if (g !== 1) {
-      const flat = this._tmp3.copy(Y).addScaledVector(nose, -Y.dot(nose));
-      if (flat.lengthSq() > 1e-6) {
-        flat.normalize();
-        const cross = flat.clone().cross(up);
-        let ang = Math.atan2(cross.dot(nose), flat.dot(up));
-        ang = THREE.MathUtils.clamp(ang * g, -1.45, 1.45);
-        up.copy(flat).applyAxisAngle(nose, ang);
-      }
+      ang = combineRoll(a0, a1);
     }
+    // optional gain: >1 turns a small wrist roll into a bigger edge angle
+    ang = applyGain(ang, this.settings.rollGain);
+    const up = upFromRoll(nose, flat, ang, this._tmp5);
     raw.up.copy(up);
     raw.valid = true;
 

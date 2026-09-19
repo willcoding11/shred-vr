@@ -457,7 +457,7 @@ function menuAction(id) {
 // ---------------- loop ----------------
 const clock = new THREE.Clock();
 const FIXED = 1 / 120;
-let acc = 0, calibrated = false, sawHands = 0, slowMo = 1, legY = null, legVy = 0, bootSag = 0;
+let acc = 0, calibrated = false, sawHands = 0, slowMo = 1, legY = null, legVy = 0, bootSag = 0, onRail = 0;
 let lastGateTap = 0;
 const BOOT_AXIS = new THREE.Vector3(0, 0, 1);
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), _basis = new THREE.Matrix4();
@@ -617,7 +617,11 @@ function stepVR(dtReal, now) {
   // hard carve. That is real acceleration you can feel, not induced vection.
   vignette.update(dt, Math.min(1, settings.vignette * THREE.MathUtils.clamp(Math.abs(rider.lateralG) / 2.6, 0, 1) + flash * 0.9));
 
-  audio.update(dtReal, { speed: rider.speed * slowMo, carving: rider.carving, skidding: rider.skidding, grounded: rider.grounded, tuck: tuckAmount() });
+  // Are we on a box? The terrain already knows, because a rail IS its surface there.
+  const railNow = rider.grounded && terrain.hasRails()
+    && terrain.railAt(rider.boardPos.x, rider.boardPos.z) > heightAt(map, rider.boardPos.x, rider.boardPos.z) ? 1 : 0;
+  if (railNow !== onRail) { if (railNow) audio.railOn(); else audio.railOff(); onRail = railNow; }
+  audio.update(dtReal, { speed: rider.speed * slowMo, carving: rider.carving, skidding: rider.skidding, grounded: rider.grounded, tuck: tuckAmount(), onRail });
   const st = hudState();
   st.slow = slowMo < 0.9;
   hud.update(st, now);

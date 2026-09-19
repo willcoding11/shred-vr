@@ -15,8 +15,17 @@ export class GameAudio {
     this.carve = mk('bandpass', 1500, 1.2);
     this.skid = mk('bandpass', 420, 0.9);
     this.rumble = mk('lowpass', 90, 1.0);
+    // Riding a box does not sound like riding snow. Snow is broadband hiss that the slope
+    // swallows; steel is a narrow, ringing scrape with a hard edge to it. Two tight bandpasses --
+    // one for the hiss of the base over metal, one for the ring in the bar itself -- plus a
+    // slow detuned wobble on the ring, because a rail is never perfectly smooth under you.
+    this.railHiss = mk('bandpass', 3200, 5.0);
+    this.railRing = mk('bandpass', 760, 9.0);
+    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 7.5;
+    const lfoGain = ctx.createGain(); lfoGain.gain.value = 90;
+    lfo.connect(lfoGain); lfoGain.connect(this.railRing.f.frequency); lfo.start();
   }
-  update(dt, { speed = 0, carving = 0, skidding = 0, grounded = true, tuck = 0 } = {}) {
+  update(dt, { speed = 0, carving = 0, skidding = 0, grounded = true, tuck = 0, onRail = 0 } = {}) {
     if (!this.ctx || !this.enabled) return;
     const t = this.ctx.currentTime, tc = 0.08;
     const s = Math.min(1, speed / 28);
@@ -26,7 +35,22 @@ export class GameAudio {
     this.carve.f.frequency.setTargetAtTime(1200 + speed * 40, t, tc);
     this.skid.g.gain.setTargetAtTime(grounded ? skidding * Math.min(1, speed / 10) * 0.3 : 0, t, tc);
     this.rumble.g.gain.setTargetAtTime(grounded ? Math.min(1, speed / 20) * 0.35 : 0, t, tc);
+    // On a rail the snow sounds have to get out of the way, or you hear both at once and it
+    // reads as neither.
+    const on = grounded ? onRail : 0;
+    const sp = Math.min(1, speed / 9);
+    this.railHiss.g.gain.setTargetAtTime(on * sp * 0.20, t, 0.03);
+    this.railHiss.f.frequency.setTargetAtTime(2400 + speed * 90, t, 0.05);
+    this.railRing.g.gain.setTargetAtTime(on * sp * 0.13, t, 0.03);
+    if (on > 0.5) {
+      this.carve.g.gain.setTargetAtTime(0, t, 0.03);
+      this.skid.g.gain.setTargetAtTime(0, t, 0.03);
+    }
   }
+
+  // The clack as the board finds the steel, and again as it leaves.
+  railOn() { this.tone(210, 0.05, 'square', 0.10); this.burst(2600, 0.07, 0.10); }
+  railOff() { this.burst(1800, 0.05, 0.07); }
   tone(freq, dur = 0.12, type = 'sine', gain = 0.25, when = 0) {
     if (!this.ctx || !this.enabled) return;
     const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain();

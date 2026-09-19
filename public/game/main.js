@@ -9,7 +9,8 @@ import { PropRenderer, makeStartGate, makeFinishBanner } from '../shared/props.j
 import { Scenery } from '../shared/scenery.js';
 import { LiftRenderer, baseNear, seatAt, unloadSpot, LIFT } from '../shared/lifts.js';
 import { LiveClient } from '../shared/live.js';
-import { deserializeMap, applyRegion, PROP_TYPES, bounds, lowestHeight } from '../shared/mapformat.js';
+import { deserializeMap, applyRegion, PROP_TYPES, bounds, lowestHeight, heightAt } from '../shared/mapformat.js';
+import { buildColliders, radiusAt, clears, bonk } from '../shared/collide.js';
 import { Rider, SNOW } from './physics.js';
 import { BoardControls } from './controls.js';
 import { Hud, VrMenu, Vignette, fmtTime } from './hud.js';
@@ -134,6 +135,7 @@ function rebuildLifts() {
 // once the stroke stops instead.
 function settleTerrain() {
   if (!map || !terrain) return;
+  terrain.setRails();                   // the boxes sit on ground that has just moved
   terrain.bakeLight();
   terrain.recolor();
   scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
@@ -156,20 +158,7 @@ function placeOnGround(obj, x, z, yaw) { obj.position.set(x, terrain.heightAt(x,
 
 function rebuildSpatial() {
   spatial = new Map();
-  for (const p of map.props) {
-    const def = PROP_TYPES[p.t]; if (!def) continue;
-    if (p.t === 'gate') {
-      const c = Math.cos(p.r || 0), s = Math.sin(p.r || 0), hw = def.width / 2;
-      for (const side of [-1, 1]) addSpatial({ x: p.x + side * hw * c, z: p.z - side * hw * s, r: 0.12, hard: false, t: 'pole' });
-      continue;
-    }
-    if (p.t === 'fence') {
-      const c = Math.cos(p.r || 0), s = Math.sin(p.r || 0), hl = def.len / 2;
-      for (let k = -1; k <= 1; k += 0.25) addSpatial({ x: p.x + k * hl * c, z: p.z - k * hl * s, r: 0.7, hard: true, t: 'fence' });
-      continue;
-    }
-    if (def.r > 0) addSpatial({ x: p.x, z: p.z, r: def.r * (p.s || 1), hard: def.hard, t: p.t });
-  }
+  for (const o of buildColliders(map)) addSpatial(o);
 }
 function addSpatial(o) { const k = `${Math.floor(o.x / 8)},${Math.floor(o.z / 8)}`; (spatial.get(k) || spatial.set(k, []).get(k)).push(o); }
 function nearby(x, z) {
@@ -289,6 +278,7 @@ live.on('props', (msg) => {
     map.lifts = msg.lifts;
     rebuildLifts();
   }
+  terrain.setRails();                 // a rail is a surface, so a new one changes the ground
   props.sync(); rebuildMarkers(); rebuildSpatial();
   if (JSON.stringify(map.ice ?? null) !== iceBefore) terrain.recolor();
   flashLive();
@@ -667,7 +657,7 @@ window.shredCam = (o = {}) => { Object.assign(preview, o); if (o.at === null) pr
 // Everything a review needs to check a claim instead of squinting at a screenshot. Reviewing the
 // Real preset from pictures alone kept producing confident statements about which mesh or which
 // shadow map was in use that turned out to be wrong in both directions.
-window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings, live, map });
+window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings, live, map, nearby, groundAt: heightAt });
 
 // A repeatable cost measurement, because "it looks smooth on a desktop GPU" is not a number and a
 // headset has about eleven milliseconds for two eyes. Walks a fixed set of viewpoints, lets the
@@ -770,29 +760,36 @@ function handleEvents() {
 let hitThisFrame = false;
 function checkCollisions() {
   const p = rider.boardPos;
+  const easy = settings.realism === 'easy';
   for (const o of nearby(p.x, p.z)) {
+    // OVER IT IS PAST IT, and a conifer is a spike rather than a pillar -- see collide.js.
+    if (clears(o, p.y)) continue;
+    const rad = radiusAt(o, p.y);
     const d = Math.hypot(o.x - p.x, o.z - p.z);
-    if (d >= o.r + 0.28) continue;
+    if (d >= rad + 0.28) continue;
+    const nx = (p.x - o.x) / (d || 1), nz = (p.z - o.z) / (d || 1);
     if (o.hard) {
-      // Solid, so it stops you dead and shoves you clear. It does not end the run -- you just
-      // have to get going again, which costs you far more than a reset screen would.
-      // Guarded, because collisions run per physics substep: without this a single tree took
-      // 88% of your speed once for every substep it stayed inside you.
-      const nx = (p.x - o.x) / (d || 1), nz = (p.z - o.z) / (d || 1);
-      rider.pos.x += nx * (o.r + 0.35 - d); rider.pos.z += nz * (o.r + 0.35 - d);
-      // At most one hard stop per frame, whatever you clipped. Remembering a single last-hit
+      rider.pos.x += nx * (rad + 0.35 - d); rider.pos.z += nz * (rad + 0.35 - d);
+      // At most one response per frame, whatever you clipped. Remembering a single last-hit
       // object is not enough: a fence is built from nine overlapping spheres 0.75 m apart, so you
-      // are inside two or three at once, the guard never matches, and the 88% brake compounds
-      // once per sphere per substep. Measured, riding into one fence at 15 m/s left the rider at
+      // are inside two or three at once, the guard never matches, and the brake compounds once
+      // per sphere per substep. Measured, riding into one fence at 15 m/s left the rider at
       // 4.8e-110 m/s -- total annihilation, which then dropped them in a heap on the hill.
-      if (!hitThisFrame) {
+      if (hitThisFrame) continue;
+      hitThisFrame = true;
+      if (easy) {
+        // A BONK. You lose a little speed and get steered round it, rather than stopped dead.
+        const r2 = bonk(rider.vel.x, rider.vel.z, nx, nz);
+        rider.vel.x = r2.vx; rider.vel.z = r2.vz;
+        if (rider.speed > 4) audio.stumble();
+      } else {
+        // Solid, so it stops you dead and shoves you clear. It does not end the run -- you just
+        // have to get going again, which costs you far more than a reset screen would.
         if (rider.speed > 3.5) audio.crash();
         rider.vel.multiplyScalar(0.12);
-        hitThisFrame = true;
       }
     } else {
-      const nx = (p.x - o.x) / (d || 1), nz = (p.z - o.z) / (d || 1);
-      rider.pos.x += nx * (o.r + 0.3 - d); rider.pos.z += nz * (o.r + 0.3 - d);
+      rider.pos.x += nx * (rad + 0.3 - d); rider.pos.z += nz * (rad + 0.3 - d);
       rider.vel.multiplyScalar(o.t === 'pole' ? 0.85 : 0.6);
       audio.stumble();
     }

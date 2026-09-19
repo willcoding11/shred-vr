@@ -1061,6 +1061,30 @@ function alpineBowl() {
       applyBrush(map, { tool: 'smooth', x: kx, z: kz - 6, radius: 26, strength: 1, dt: 1.0, falloff: 0.5 });
       kicker(map, kx, kz, { radius: 10 + i * 1.5, height: 1.9 + i * 0.55 });
     }
+    // and a rail line down the rib beside the jumps, so the park has something to do that is not
+    // just airtime. Each box is LEVEL, and its ride surface is level too, so the ground under it
+    // is flattened first -- drop one on a 25 degree pitch and it buries its uphill end.
+    // Aligned down the fall line at that point rather than to the map, because a box you have to
+    // approach across the slope is a box nobody rides.
+    for (const [d, th, len, sc] of [[300, 0.395, 8, 0.85], [252, 0.375, 8, 1.15],
+                                    [206, 0.405, 8, 1.0], [160, 0.38, 8, 1.35]]) {
+      const [rx, rz] = atPolar(d, th + twist(d));
+      const [ax, az] = atPolar(d - 24, th + twist(d - 24));
+      applyBrush(map, { tool: 'smooth', x: rx, z: rz, radius: 22, strength: 1, dt: 1.0, falloff: 0.55 });
+      applyBrush(map, { tool: 'smooth', x: rx, z: rz, radius: 13, strength: 1, dt: 1.0, falloff: 0.9 });
+      place(map, 'rail', rx, rz, { s: sc, r: Math.atan2(ax - rx, az - rz) });
+      place(map, 'flag', rx + 5, rz - 7); place(map, 'flag', rx - 5, rz - 7);
+    }
+  }
+
+  // 4b. A SECOND RAIL, on its own, down by the village where people who have never ridden one are.
+  {
+    const [rx, rz] = atPolar(150, -0.16);
+    const [ax, az] = atPolar(126, -0.16);
+    applyBrush(map, { tool: 'smooth', x: rx, z: rz, radius: 24, strength: 1, dt: 1.0, falloff: 0.55 });
+    applyBrush(map, { tool: 'smooth', x: rx, z: rz, radius: 14, strength: 1, dt: 1.0, falloff: 0.9 });
+    place(map, 'rail', rx, rz, { s: 0.9, r: Math.atan2(ax - rx, az - rz) });
+    place(map, 'sign', rx - 7, rz - 9, { r: Math.PI });
   }
 
   // 5. THE COULOIR -- a narrow slot through the west headwall, for people who want it.

@@ -1,6 +1,7 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
 import { gridToWorld, slopeDegAt, heightAt, normalAt, PROP_TYPES } from './mapformat.js';
+import { buildRails, railHeightAt } from './collide.js';
 import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
@@ -135,6 +136,23 @@ export class Terrain {
 
   setMap(map) { this.map = map; this.rebuild(); }
 
+  // RAILS ARE GROUND, not obstacles.
+  //
+  // A park box is a thing you ride on top of, so the honest place for it is the surface the board
+  // samples rather than a collision sphere it bumps into -- and that means the whole movement
+  // model applies to it unchanged: the edges grip, the board balances, and riding off the side is
+  // a drop rather than a scripted dismount. Nothing in physics.js knows rails exist.
+  //
+  // This works because the board's contact is a soft MINIMUM of nine samples, which resolves to
+  // whichever ground is highest. It is also why these are boxes 46 cm wide rather than round bars:
+  // the soft minimum lifts the board by bridge*ln(9/n) when only n of the nine samples are on the
+  // narrow thing, which at speed is 40 cm of float above a rail you are supposed to be standing on.
+  // At 46 cm the whole board is carried and there is no float at all.
+  setRails() { this.rails = buildRails(this.map); }
+  railAt(wx, wz) { return this.rails && this.rails.length ? railHeightAt(this.rails, wx, wz) : -Infinity; }
+
+  hasRails() { return !!(this.rails && this.rails.length); }
+
   rebuild() {
     const { w, h } = this.map.size;
     for (const c of this.chunks) { c.geo.dispose(); this.mesh.remove(c.mesh); }
@@ -143,6 +161,7 @@ export class Terrain {
     for (let z0 = 0; z0 < h - 1; z0 += CS) for (let x0 = 0; x0 < w - 1; x0 += CS) {
       this.chunks.push(this.buildChunk(x0, z0, Math.min(w - 1, x0 + CS), Math.min(h - 1, z0 + CS)));
     }
+    this.setRails();
     this.bakeLight();
     this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 });
     this.buildSkirt();
@@ -451,8 +470,21 @@ export class Terrain {
 
   recolor() { const { w, h } = this.map.size; this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 }); }
 
-  heightAt(x, z) { return heightAt(this.map, x, z); }
-  normalAt(x, z, out) { return normalAt(this.map, x, z, out); }
+  heightAt(x, z) {
+    const g = heightAt(this.map, x, z);
+    if (!this.rails || !this.rails.length) return g;
+    const r = this.railAt(x, z);
+    return r > g ? r : g;
+  }
+  normalAt(x, z, out) {
+    // A box top is flat, so standing on one the snow's normal underneath is the wrong answer --
+    // it would tip the board to a slope that is not there.
+    if (this.rails && this.rails.length && this.railAt(x, z) > heightAt(this.map, x, z)) {
+      if (out) { out[0] = 0; out[1] = 1; out[2] = 0; return out; }
+      return [0, 1, 0];
+    }
+    return normalAt(this.map, x, z, out);
+  }
   slopeAt(x, z) { return slopeDegAt(this.map, x, z); }
 }
 

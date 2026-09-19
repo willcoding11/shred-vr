@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../node_modules/three/build/three.module.js';
 import { deserializeMap, heightAt, normalAt, slopeDegAt, PROP_TYPES, bounds } from '../public/shared/mapformat.js';
+import { buildColliders, buildRails, railHeightAt, radiusAt, clears } from '../public/shared/collide.js';
 import { Rider, SNOW } from '../public/game/physics.js';
 import { makePose, deg } from './pose.js';
 
@@ -20,15 +21,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mapId = process.argv[2] || 'first-tracks';
 const scenario = process.argv[3] || 'follow';
 const map = deserializeMap(fs.readFileSync(path.join(__dirname, '..', 'maps', `${mapId}.json`), 'utf8'));
+// Rails, colliders and what hitting one costs all come from the same module the game uses. They
+// used to be a second copy here, and the copy carried the same bug: a collider with no height.
+const railList = buildRails(map);
+const onRail = (x, z) => railList.length && railHeightAt(railList, x, z) > heightAt(map, x, z);
 const terrain = {
-  heightAt: (x, z) => heightAt(map, x, z),
-  normalAt: (x, z, o) => normalAt(map, x, z, o),
-  slopeAt: (x, z) => slopeDegAt(map, x, z),
+  heightAt: (x, z) => { const g = heightAt(map, x, z); const r = railHeightAt(railList, x, z); return r > g ? r : g; },
+  normalAt: (x, z, o) => { if (onRail(x, z)) { if (o) { o[0] = 0; o[1] = 1; o[2] = 0; return o; } return [0, 1, 0]; } return normalAt(map, x, z, o); },
+  slopeAt: (x, z) => (onRail(x, z) ? 0 : slopeDegAt(map, x, z)),
 };
+const hardProps = buildColliders(map, { hardOnly: true, pad: 0.28 });
 
-const hardProps = map.props
-  .filter((p) => PROP_TYPES[p.t]?.r > 0 && PROP_TYPES[p.t].hard)
-  .map((p) => ({ x: p.x, z: p.z, r: PROP_TYPES[p.t].r * (p.s || 1) + 0.28, t: p.t }));
 const gateList = map.props.filter((p) => p.t === 'gate')
   .map((p) => ({ x: p.x, z: p.z, r: p.r || 0, w: PROP_TYPES.gate.width, passed: false, missed: false }));
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -141,12 +144,13 @@ function run(name, player, { seconds = 150, startAt = null, startKmh = null, rea
     // end the run. A harness that ends the run instead reports "unrideable" for a map you would
     // actually finish, just slower and crosser.
     {
-      const hit = hardProps.find((q) => Math.hypot(q.x - p.x, q.z - p.z) < q.r);
+      const hit = hardProps.find((q) => !clears(q, p.y) && Math.hypot(q.x - p.x, q.z - p.z) < radiusAt(q, p.y));
       if (hit && (hit !== lastHit || t - lastHitAt > 0.4)) {
         if (r.speed > 3.5) events.push({ t: +t.toFixed(2), type: 'hit', kind: hit.t, speed: +r.speed.toFixed(1) });
         const d = Math.hypot(hit.x - p.x, hit.z - p.z) || 1;
-        r.pos.x -= ((hit.x - p.x) / d) * (hit.r + 0.35 - d);
-        r.pos.z -= ((hit.z - p.z) / d) * (hit.r + 0.35 - d);
+        const hr = radiusAt(hit, p.y);
+        r.pos.x -= ((hit.x - p.x) / d) * (hr + 0.35 - d);
+        r.pos.z -= ((hit.z - p.z) / d) * (hr + 0.35 - d);
         r.vel.multiplyScalar(0.12);
         lastHit = hit; lastHitAt = t; hits++;
       }

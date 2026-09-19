@@ -7,7 +7,7 @@
     "widthM": 1017,
     "verticalDropM": 74.43206787109375,
     "avgGradeDeg": 4.18589307510528,
-    "steepPct": 32.771961766044605,
+    "steepPct": 32.761457932145234,
     "flatPct": 0.5987185322642765,
     "maxSlopeDeg": 77.87832790927506,
     "slopeHistogram": [
@@ -22,16 +22,17 @@
       8,
       13
     ],
-    "props": 1416,
+    "props": 1430,
     "gates": 0,
     "propCounts": {
+      "rail": 5,
+      "flag": 58,
+      "sign": 11,
       "pine": 545,
       "fir": 510,
       "birch": 183,
       "boulder": 50,
       "rock": 49,
-      "sign": 10,
-      "flag": 50,
       "hut": 6,
       "lamp": 11,
       "snowman": 2

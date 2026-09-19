@@ -452,7 +452,25 @@ function placeProp(hit, { single = true, sync = true } = {}) {
   const s = +(P.scale * (1 + (Math.random() * 2 - 1) * jitter)).toFixed(2);
   let r = P.randomRot ? Math.random() * Math.PI * 2 : P.rot;
   if (P.type === 'gate' || P.type === 'fence' || P.type === 'sign' || P.type === 'hut') r = P.type === 'gate' ? downhillYaw(hit.x, hit.z) : P.randomRot ? downhillYaw(hit.x, hit.z) + Math.PI / 2 : P.rot;
+  // A rail points down the hill unless you have set a rotation yourself -- a box you have to
+  // approach across the slope is a box nobody rides.
+  if (P.type === 'rail' && P.rot === 0) r = downhillYaw(hit.x, hit.z);
   state.map.props.push({ t: P.type, x: +hit.x.toFixed(2), z: +hit.z.toFixed(2), s: def.scale ? s : 1, r: +r.toFixed(3) });
+  if (P.type === 'rail') {
+    // The box is LEVEL, and so is the surface you ride on it, so the ground underneath has to be
+    // level too or it buries its uphill end. Flattening here means a rail dropped anywhere works
+    // rather than needing you to prepare the ground first.
+    const rad = def.len * (def.scale ? s : 1) * 0.75;
+    applyBrush(state.map, { tool: 'smooth', x: hit.x, z: hit.z, radius: rad, strength: 1, dt: 1.0, falloff: 0.55 });
+    applyBrush(state.map, { tool: 'smooth', x: hit.x, z: hit.z, radius: rad * 0.6, strength: 1, dt: 1.0, falloff: 0.9 });
+    const b = bounds(state.map), sp = state.map.spacing;
+    const g = (wx, wz) => [Math.round((wx - b.minX) / sp), Math.round(wz / sp)];
+    const [x0, z0] = g(hit.x - rad, hit.z - rad), [x1, z1] = g(hit.x + rad, hit.z + rad);
+    const rect = { x0: Math.max(0, x0), z0: Math.max(0, z0),
+      x1: Math.min(state.map.size.w - 1, x1), z1: Math.min(state.map.size.h - 1, z1) };
+    view.terrain.updateRegion(rect); view.terrain.setRails();
+    queuePatch(rect); markDirty({ terrain: true });
+  }
   if (sync) { view.props.sync(); }
 }
 function nearestProp(x, z, maxD) {

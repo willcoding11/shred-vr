@@ -104,6 +104,31 @@ function snowman() {
   parts.push(colored(new THREE.ConeGeometry(0.06, 0.35, 5), '#f97316').rotateX(Math.PI / 2).translate(0, 2.55, 0.5));
   return mergeGeometries(parts);
 }
+// A park box: a steel-topped slab on short legs, ramped at both ends so you can ride straight on.
+// Built from the same numbers the terrain uses for its surface (PROP_TYPES.rail), so what you see
+// and what you ride are the same object.
+function rail() {
+  const d = PROP_TYPES.rail, L = d.len, W = d.railW, H = d.railH;
+  const ramp = Math.min(1.4, L * 0.28);
+  const parts = [colored(new THREE.BoxGeometry(W, 0.1, L), '#aeb8c6').translate(0, H - 0.05, 0)];
+  for (const end of [-1, 1]) {
+    const w = colored(new THREE.BoxGeometry(W, H, ramp), '#aeb8c6');
+    const pos = w.attributes.position;
+    for (let i = 0; i < pos.count; i++) if (Math.sign(pos.getZ(i)) === end) pos.setY(i, -H / 2);
+    w.computeVertexNormals();
+    parts.push(w.translate(0, H / 2, end * (L / 2 - ramp / 2)));
+  }
+  for (const sx of [-1, 1]) {
+    parts.push(colored(new THREE.BoxGeometry(0.05, H - 0.1, L - ramp * 2), '#6b7280')
+      .translate(sx * (W / 2 - 0.02), (H - 0.1) / 2, 0));
+  }
+  for (const tz of [-0.34, 0, 0.34]) for (const sx of [-1, 1]) {
+    parts.push(colored(new THREE.BoxGeometry(0.07, H, 0.07), '#4b5563')
+      .translate(sx * (W / 2 - 0.06), H / 2, tz * (L - ramp * 2)));
+  }
+  return mergeGeometries(parts);
+}
+
 function hut() {
   const parts = [colored(new THREE.BoxGeometry(5, 2.6, 4), '#7a4a22').translate(0, 1.3, 0)];
   const roof = colored(new THREE.CylinderGeometry(0, 3.6, 1.8, 4, 1), '#3b2a1a');
@@ -170,7 +195,7 @@ export function propGeometries(quality = 'fast') {
     'pine:far': farConifer(false), 'fir:far': farConifer(true), 'birch:far': farBirch(),
     rock: rockGeo(1.0, '#6b7280', 1), boulder: rockGeo(2.4, '#4b5563', 7),
     gateA: gate('#ef4444'), gateB: gate('#3b82f6'),
-    flag: flag(), fence: fence(), lamp: lamp(), sign: sign(), snowman: snowman(), hut: hut(),
+    flag: flag(), fence: fence(), lamp: lamp(), sign: sign(), snowman: snowman(), hut: hut(), rail: rail(),
   };
   for (const g of Object.values(cache)) g.computeBoundingSphere();
   return cache;
@@ -227,9 +252,9 @@ export class PropRenderer {
       // With lod off there is only ever the full mesh, so the cheaper tiers are not even built.
       const keys = tree && this.lod ? [near, p.t + '@mid', p.t + '@far'] : [near];
       const s = p.s || 1;
-      const y = heightAt(this.map, p.x, p.z) - 0.05 - (tree ? 0.30 * s : 0);
+      const y = heightAt(this.map, p.x, p.z) - (p.t === 'rail' ? 0 : 0.05) - (tree ? 0.30 * s : 0);
       tmpP.set(p.x, y, p.z);
-      if (tree || p.t === 'lamp' || p.t === 'sign' || p.t === 'snowman') {
+      if (tree || p.t === 'lamp' || p.t === 'sign' || p.t === 'snowman' || p.t === 'rail') {
         tmpQ.setFromEuler(tmpE.set(0, p.r || 0, 0));
       } else {
         const n = normalAt(this.map, p.x, p.z);

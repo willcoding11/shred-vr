@@ -9,19 +9,26 @@ export const MAP_VERSION = 2;
 export const DIFFICULTIES = ['green', 'blue', 'black'];
 
 // Catalogue of placeable things. `r` = collision radius (0 = decorative), `hard` = crash on hit.
+// `r` = collision radius in metres (0 = you ride straight through), `hard` = a solid stop rather
+// than a stumble, `ch` = how TALL the collider is, and `taper` narrows it toward the top the way a
+// conifer does. Height matters because without it a collider is an infinitely tall cylinder: a
+// 1 m boulder would take you out of the air six metres above it.
 export const PROP_TYPES = {
-  pine:    { label: 'Pine tree',   r: 0.45, hard: true,  scale: [0.7, 1.6], color: '#2f6b3a' },
-  fir:     { label: 'Fir tree',    r: 0.4,  hard: true,  scale: [0.8, 1.8], color: '#1f5a3c' },
-  birch:   { label: 'Birch',       r: 0.25, hard: true,  scale: [0.8, 1.4], color: '#d9d2c5' },
-  rock:    { label: 'Rock',        r: 0.9,  hard: true,  scale: [0.6, 1.6], color: '#6b7280' },
-  boulder: { label: 'Boulder',     r: 2.2,  hard: true,  scale: [0.8, 1.8], color: '#4b5563' },
-  gate:    { label: 'Slalom gate', r: 0,    hard: false, scale: [1, 1],     color: '#ef4444', width: 6 },
-  flag:    { label: 'Marker flag', r: 0,    hard: false, scale: [1, 1],     color: '#f59e0b' },
-  fence:   { label: 'Fence',       r: 0.6,  hard: true,  scale: [1, 1],     color: '#a16207', len: 6 },
-  lamp:    { label: 'Trail lamp',  r: 0.25, hard: false, scale: [1, 1],     color: '#fbbf24' },
-  sign:    { label: 'Trail sign',  r: 0.25, hard: false, scale: [1, 1],     color: '#7c2d12' },
-  snowman: { label: 'Snowman',     r: 0.6,  hard: false, scale: [0.8, 1.2], color: '#f8fafc' },
-  hut:     { label: 'Ski hut',     r: 3.5,  hard: true,  scale: [1, 1],     color: '#78350f' },
+  pine:    { label: 'Pine tree',   r: 0.45, hard: true,  scale: [0.7, 1.6], color: '#2f6b3a', ch: 8.4,  taper: 0.25 },
+  fir:     { label: 'Fir tree',    r: 0.4,  hard: true,  scale: [0.8, 1.8], color: '#1f5a3c', ch: 10.2, taper: 0.25 },
+  birch:   { label: 'Birch',       r: 0.25, hard: true,  scale: [0.8, 1.4], color: '#d9d2c5', ch: 7.0,  taper: 0.45 },
+  rock:    { label: 'Rock',        r: 0.9,  hard: true,  scale: [0.6, 1.6], color: '#6b7280', ch: 1.2 },
+  boulder: { label: 'Boulder',     r: 2.2,  hard: true,  scale: [0.8, 1.8], color: '#4b5563', ch: 2.8 },
+  gate:    { label: 'Slalom gate', r: 0,    hard: false, scale: [1, 1],     color: '#ef4444', width: 6, ch: 2.6 },
+  flag:    { label: 'Marker flag', r: 0,    hard: false, scale: [1, 1],     color: '#f59e0b', ch: 1.8 },
+  fence:   { label: 'Fence',       r: 0.6,  hard: true,  scale: [1, 1],     color: '#a16207', len: 6, ch: 1.3 },
+  lamp:    { label: 'Trail lamp',  r: 0.25, hard: false, scale: [1, 1],     color: '#fbbf24', ch: 3.6 },
+  sign:    { label: 'Trail sign',  r: 0.25, hard: false, scale: [1, 1],     color: '#7c2d12', ch: 2.2 },
+  snowman: { label: 'Snowman',     r: 0.6,  hard: false, scale: [0.8, 1.2], color: '#f8fafc', ch: 3.1 },
+  hut:     { label: 'Ski hut',     r: 3.5,  hard: true,  scale: [1, 1],     color: '#78350f', ch: 5.2 },
+  // A park box: flat-topped, wide enough to land on and ride. It has no collider at all -- you do
+  // not bump into a rail, you ride on top of it, which the terrain handles (see Terrain.railAt).
+  rail:    { label: 'Rail / box',  r: 0,    hard: false, scale: [0.8, 1.5], color: '#94a3b8', len: 8, railW: 0.46, railH: 0.38 },
 };
 
 export function createMap({ id, name, w = 96, h = 320, spacing = 2, slopeDeg = 14, h0 = 0, difficulty = 'green' } = {}) {

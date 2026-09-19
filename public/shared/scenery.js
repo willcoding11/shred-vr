@@ -109,7 +109,12 @@ export class Scenery {
     this.hemi.intensity = 0.45 + Math.sin(t * Math.PI) * 0.35;
     const f = this.env.fog ?? 0.35;
     this.scene.fog.color.copy(hor).lerp(new THREE.Color(0xffffff), 0.3);
-    this.scene.fog.near = 120 - f * 90; this.scene.fog.far = 3200 - f * 1700;
+    // Aerial perspective, not a white-out. Starting the haze at 100 m made a kilometre-wide
+    // mountain fade to nothing barely past the trees in front of you, which reads as fog rolling
+    // in rather than as distance. Real mountain air is very clear; you want the far peaks
+    // softened and nothing else.
+    const nearBase = this.quality === 'real' ? 520 : 330;
+    this.scene.fog.near = nearBase - f * 180; this.scene.fog.far = 4400 - f * 1500;
     this.snow.setDensity(this.env.snowfall ?? 0.2);
   }
 

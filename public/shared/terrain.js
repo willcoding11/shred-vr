@@ -70,6 +70,20 @@ export class Terrain {
     }
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = 'terrain';
+    // A curtain hanging off the map's border. The heightfield has to stop somewhere, and where it
+    // stops you were looking straight through the gap between its edge and the distant mountains
+    // -- from anywhere near the boundary the world visibly ended in a cliff with sky behind it.
+    // Dropping a skirt 400 m straight down closes it from every angle and costs 8 quads.
+    this.skirtGeo = new THREE.BufferGeometry();
+    // Its own material, and it is ROCK. Hanging the snow material off the edge gave a flat grey
+    // slab that read as a hole in the world; a cliff band with a snow lip on top is what the edge
+    // of a mountain actually looks like, and it hides the seam just as well.
+    this.skirtMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: true });
+    this.skirt = new THREE.Mesh(this.skirtGeo, this.skirtMat);
+    this.skirt.name = 'terrain-skirt';
+    this.skirt.frustumCulled = false;
+    this.skirt.castShadow = false; this.skirt.receiveShadow = false;
+    this.mesh.add(this.skirt);
     this.mesh.receiveShadow = shadows;
     // The hill shades ITSELF. Without this a roller has no shadow of its own, and the only
     // shadows on the whole slope come from trees -- which is most of why it reads as a flat
@@ -112,6 +126,66 @@ export class Terrain {
     this.mesh.geometry = this.geometry;
     this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 });
     this.geometry.computeBoundingSphere();
+    this.buildSkirt();
+  }
+
+  // The border, extruded downwards. Reads the finished heights, so call it after updateRegion.
+  buildSkirt() {
+    if (!this.skirtGeo) return;
+    const { w, h } = this.map.size, H = this.map.heights;
+    let low = Infinity;
+    for (let i = 0; i < H.length; i++) if (H[i] < low) low = H[i];
+    const DEEP = low - 400;
+    const edge = [];
+    for (let x = 0; x < w; x++) edge.push([x, 0]);
+    for (let z = 1; z < h; z++) edge.push([w - 1, z]);
+    for (let x = w - 2; x >= 0; x--) edge.push([x, h - 1]);
+    for (let z = h - 2; z >= 1; z--) edge.push([0, z]);
+    const n = edge.length;
+    // Three rows: a snow lip, then rock that darkens as it falls away.
+    const rows = 3, vcount = n * rows;
+    const pos = new Float32Array(vcount * 3), col = new Float32Array(vcount * 3), uv = new Float32Array(vcount * 2);
+    const tint = (t, i, jitter) => {
+      // t = 0 at the lip, 1 at the bottom
+      const snow = Math.max(0, 1 - t * 9);
+      const r = (0.30 + jitter * 0.09) * (1 - snow) + 0.93 * snow;
+      const g = (0.29 + jitter * 0.08) * (1 - snow) + 0.95 * snow;
+      const b = (0.30 + jitter * 0.08) * (1 - snow) + 0.99 * snow;
+      const dark = 1 - Math.min(0.45, t * 0.5);
+      col[i * 3] = r * dark; col[i * 3 + 1] = g * dark; col[i * 3 + 2] = b * dark;
+    };
+    for (let i = 0; i < n; i++) {
+      const [gx, gz] = edge[i], [wx, wz] = gridToWorld(this.map, gx, gz);
+      const y = H[gz * w + gx];
+      const jitter = ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1;
+      for (let r = 0; r < rows; r++) {
+        const t = r / (rows - 1);
+        const v = i * rows + r;
+        // the face leans outward a little and is ragged, so it is not a machined plane
+        const lean = t * (5 + jitter * 7);
+        const cxs = Math.sign(wx) || 1, czs = gz === 0 ? -1 : gz === h - 1 ? 1 : 0;
+        pos[v * 3] = wx + (gx === 0 || gx === w - 1 ? cxs * lean : 0);
+        pos[v * 3 + 1] = y - (y - DEEP) * (t * t);
+        pos[v * 3 + 2] = wz + czs * lean;
+        tint(t, v, jitter);
+        uv[v * 2] = i * 0.35; uv[v * 2 + 1] = t * 40;
+      }
+    }
+    const idx = new Uint32Array((n - 1) * (rows - 1) * 6);
+    let k = 0;
+    for (let i = 0; i < n - 1; i++) for (let r = 0; r < rows - 1; r++) {
+      const a = i * rows + r, b = a + 1, c = a + rows, d = c + 1;
+      idx[k++] = a; idx[k++] = b; idx[k++] = c;
+      idx[k++] = c; idx[k++] = b; idx[k++] = d;
+    }
+    this.skirtGeo.dispose();
+    this.skirtGeo = new THREE.BufferGeometry();
+    this.skirtGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.skirtGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    this.skirtGeo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    this.skirtGeo.setIndex(new THREE.BufferAttribute(idx, 1));
+    this.skirtGeo.computeVertexNormals();
+    this.skirt.geometry = this.skirtGeo;
   }
 
   // Refresh vertex heights, normals and colours inside a grid rect (inclusive).

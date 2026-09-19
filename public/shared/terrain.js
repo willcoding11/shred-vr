@@ -4,6 +4,7 @@ import { gridToWorld, slopeDegAt, heightAt, normalAt } from './mapformat.js';
 import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
+const _ICE = new THREE.Color(0.58, 0.74, 0.84);
 
 // Procedural "groomed corduroy" snow texture with a little sparkle noise.
 export function makeSnowTexture(size = 256) {
@@ -205,6 +206,7 @@ export class Terrain {
       const i = z * w + x;
       pos.array[i * 3 + 1] = this.map.heights[i];
       const [wx, wz] = gridToWorld(this.map, x, z);
+      void wx;
       normalAt(this.map, wx, wz, nrm);
       nrmCache[i * 3] = nrm[0]; nrmCache[i * 3 + 1] = nrm[1]; nrmCache[i * 3 + 2] = nrm[2];
       const slope = Math.acos(Math.min(1, nrm[1])) * 57.2958;
@@ -215,6 +217,9 @@ export class Terrain {
         const broad = curvature(H, w, h, x, z, 7);
         const relief = Math.max(-1, Math.min(1, fine / 0.55 + broad / 4.0)) * this.relief;
         snowColor(slope, x, z, this.map.env?.snowType, relief, _c);
+        // frozen water, if the map says there is any here
+        const ice = this.iceAt(wx, wz);
+        if (ice > 0) _c.lerp(_ICE, ice * 0.85);
       }
       col.array[i * 3] = _c.r; col.array[i * 3 + 1] = _c.g; col.array[i * 3 + 2] = _c.b;
     }
@@ -229,6 +234,18 @@ export class Terrain {
       else a.needsUpdate = true;
     }
     this.geometry.boundingSphere = null;
+  }
+
+  // How much of this point is frozen lake, 0 to 1. Cheap: maps carry a handful of ellipses.
+  iceAt(wx, wz) {
+    const list = this.map.ice;
+    if (!list || !list.length) return 0;
+    let best = 0;
+    for (const p of list) {
+      const r = Math.hypot((wx - p.x) / p.rx, (wz - p.z) / p.rz);
+      if (r < 1.12) best = Math.max(best, 1 - Math.max(0, (r - 0.72) / 0.4));
+    }
+    return best;
   }
 
   recolor() { const { w, h } = this.map.size; this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 }); }

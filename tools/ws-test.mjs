@@ -1,0 +1,30 @@
+// Headless check of the live-sync relay: an editor client sends patch/props/env/active,
+// a game client must receive them; REST save with ?quiet=1 must not push a full map to games.
+import WebSocket from 'ws';
+const url = 'ws://localhost:8080/ws';
+const got = [];
+const game = new WebSocket(url), editor = new WebSocket(url);
+const open = (ws, role) => new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ type: 'hello', role })); r(); }));
+game.on('message', (d) => { const m = JSON.parse(d); got.push(m.type + (m.rect ? `(${m.heights.length} heights)` : m.map ? `:${m.map.id}` : m.id ? `:${m.id}` : '')); });
+await Promise.all([open(game, 'game'), open(editor, 'editor')]);
+await new Promise((r) => setTimeout(r, 200));
+editor.send(JSON.stringify({ type: 'patch', id: 'first-tracks', rect: { x0: 10, z0: 10, x1: 12, z1: 12 }, heights: [1, 2, 3, 4, 5, 6, 7, 8, 9] }));
+editor.send(JSON.stringify({ type: 'props', id: 'first-tracks', props: [], start: { x: 0, z: 1 }, finish: { x: 0, z: 2, w: 3 } }));
+editor.send(JSON.stringify({ type: 'env', id: 'first-tracks', env: { fog: 0.1 } }));
+editor.send(JSON.stringify({ type: 'active', id: 'glade-run' }));
+await new Promise((r) => setTimeout(r, 300));
+const map = await (await fetch('http://localhost:8080/api/maps/first-tracks')).json();
+const before = got.length;
+await fetch('http://localhost:8080/api/maps/first-tracks?quiet=1', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(map) });
+await new Promise((r) => setTimeout(r, 300));
+const quietOk = !got.slice(before).includes('map:first-tracks');
+await fetch('http://localhost:8080/api/maps/first-tracks', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(map) });
+await new Promise((r) => setTimeout(r, 300));
+const loudOk = got.slice(before).includes('map:first-tracks');
+editor.send(JSON.stringify({ type: 'active', id: 'first-tracks' }));
+await new Promise((r) => setTimeout(r, 200));
+console.log('game received:', got.join(', '));
+console.log('quiet save suppressed full-map push:', quietOk, '| normal save pushed full map:', loudOk);
+const info = await (await fetch('http://localhost:8080/api/info')).json();
+console.log('info:', info.httpsUrl, 'qr bytes', info.qr.length, 'clients', JSON.stringify(info.clients));
+game.close(); editor.close();

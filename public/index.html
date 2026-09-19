@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shred VR</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root { --bg: #0b1220; --line: rgba(255,255,255,0.1); --text: #f1f5f9; --muted: rgba(241,245,249,0.6); --accent: #38bdf8; --accent-2: #f472b6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 20% -10%, rgba(56,189,248,0.18), transparent), radial-gradient(900px 500px at 100% 100%, rgba(244,114,182,0.14), transparent), var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; display: grid; place-items: center; padding: 24px; }
+  .card { width: min(880px, 100%); }
+  .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 26px; letter-spacing: -0.02em; }
+  .logo { width: 30px; height: 30px; border-radius: 9px; background: conic-gradient(from 210deg, var(--accent), var(--accent-2), var(--accent)); box-shadow: 0 0 22px rgba(56,189,248,0.45); }
+  p.lead { color: var(--muted); font-size: 15px; line-height: 1.5; margin: 10px 0 26px; max-width: 620px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  a.tile { display: block; text-decoration: none; color: inherit; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 18px; padding: 20px; transition: background 0.15s, transform 0.1s; }
+  a.tile:hover { background: rgba(255,255,255,0.09); transform: translateY(-2px); }
+  a.tile h2 { margin: 0 0 6px; font-size: 18px; }
+  a.tile p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .hs { margin-top: 14px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 18px; padding: 20px; display: flex; gap: 20px; align-items: flex-start; }
+  .hs img { width: 150px; height: 150px; border-radius: 12px; background: #fff; padding: 6px; }
+  .hs h2 { margin: 0 0 8px; font-size: 16px; }
+  code { display: inline-block; background: rgba(255,255,255,0.07); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; margin: 4px 0; user-select: all; }
+  .hs p { margin: 4px 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .hs b { color: var(--text); }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } .hs { flex-direction: column; } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><span class="logo"></span>Shred VR</div>
+    <p class="lead">A WebXR snowboarding game where your hands are your feet, plus a live map editor. Edit on this PC, ride on the headset — changes stream over instantly.</p>
+    <div class="grid">
+      <a class="tile" href="/editor/"><h2>Map editor →</h2><p>Sculpt terrain with brushes, place trees, rocks, gates and kickers, tweak weather. Every stroke shows up on the headset as you make it.</p></a>
+      <a class="tile" href="/game/"><h2>Play on desktop →</h2><p>Keyboard preview with a chase camera. Same physics as VR: carve on edge, skid to scrub speed, pop off lips.</p></a>
+    </div>
+    <div class="hs">
+      <img id="qr" alt="" />
+      <div>
+        <h2>Play on the headset</h2>
+        <p><b>Wi-Fi:</b> open this in the Quest browser, accept the certificate warning once, then tap <b>Enter VR</b>.</p>
+        <code id="httpsUrl">…</code>
+        <p><b>USB:</b> run <code>npm run adb-reverse</code> on this PC, then open <code>http://localhost:8080/game/</code> on the headset.</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    fetch('/api/info').then((r) => r.json()).then((i) => { document.getElementById('qr').src = i.qr; document.getElementById('httpsUrl').textContent = i.httpsUrl; });
+  </script>
+</body>
+</html>

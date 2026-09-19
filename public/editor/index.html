@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shred VR · Map Editor</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./editor.css" />
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/jsm/" } }
+</script>
+</head>
+<body data-tool-kind="terrain">
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-raise" viewBox="0 0 24 24"><path d="M3 19h18M4 15l5-7 4 5 3-3 4 5" /><path d="M12 3v6M9 6l3-3 3 3" /></symbol>
+    <symbol id="i-lower" viewBox="0 0 24 24"><path d="M3 19h18M4 15l5-7 4 5 3-3 4 5" /><path d="M12 9V3M9 6l3 3 3-3" /></symbol>
+    <symbol id="i-smooth" viewBox="0 0 24 24"><path d="M3 15c3 0 3-5 6-5s3 5 6 5 3-5 6-5" /><path d="M3 20h18" /></symbol>
+    <symbol id="i-flatten" viewBox="0 0 24 24"><path d="M3 12h18" /><path d="M6 8l3-3M12 8l3-3M18 8l-3-3" opacity=".5" /><path d="M6 16l3 3M12 16l3 3M18 16l-3 3" opacity=".5" /></symbol>
+    <symbol id="i-erase" viewBox="0 0 24 24"><path d="M4 16l9-9 6 6-7 7H8z" /><path d="M13 7l6 6" /><path d="M4 21h16" /></symbol>
+    <symbol id="i-noise" viewBox="0 0 24 24"><path d="M3 18l2-4 2 3 2-6 2 4 2-8 2 6 2-3 2 5 2-2" /></symbol>
+    <symbol id="i-kicker" viewBox="0 0 24 24"><path d="M3 19h18" /><path d="M4 19c6 0 10-2 12-9v9" /></symbol>
+    <symbol id="i-bank" viewBox="0 0 24 24"><path d="M3 18c6 0 8-3 9-8 1 5 3 8 9 8" /><path d="M3 21h18" /></symbol>
+    <symbol id="i-place" viewBox="0 0 24 24"><path d="M12 21s-6-6-6-11a6 6 0 0 1 12 0c0 5-6 11-6 11z" /><circle cx="12" cy="10" r="2" /></symbol>
+    <symbol id="i-scatter" viewBox="0 0 24 24"><path d="M6 20l3-6 3 6zM14 20l3-6 3 6zM10 12l3-6 3 6z" /><path d="M3 21h18" /></symbol>
+    <symbol id="i-remove" viewBox="0 0 24 24"><path d="M8 8l8 8M16 8l-8 8" /><circle cx="12" cy="12" r="9" /></symbol>
+    <symbol id="i-select" viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z" /></symbol>
+    <symbol id="i-start" viewBox="0 0 24 24"><path d="M5 21V4" /><path d="M5 4h12l-3 4 3 4H5" /></symbol>
+    <symbol id="i-finish" viewBox="0 0 24 24"><path d="M5 21V4" /><path d="M5 4h13v8H5" /><path d="M8 4v8M11 4v8M14 4v8M5 7h13M5 10h13" opacity=".5" /></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14l-4-4 4-4" /><path d="M5 10h9a5 5 0 0 1 0 10h-3" /></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l4-4-4-4" /><path d="M19 10h-9a5 5 0 0 0 0 10h3" /></symbol>
+    <symbol id="i-frame" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /><circle cx="12" cy="12" r="3" /></symbol>
+    <symbol id="i-all" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 12h18M12 3v18" opacity=".5" /></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="logo"></span>Shred VR <span class="sub">Editor</span></div>
+    <div class="mapbar">
+      <select id="mapSelect" aria-label="Map"></select>
+      <div class="menu">
+        <button class="btn ghost" id="btnNew">New level</button>
+        <button class="btn ghost" id="btnDuplicate" title="Duplicate this map">Duplicate</button>
+        <button class="btn ghost" id="btnRename" title="Rename">Rename</button>
+        <button class="btn ghost danger" id="btnDelete" title="Delete this map">Delete</button>
+      </div>
+      <span id="saveState" class="pill save clean">Saved</span>
+      <button id="btnSave" class="btn ghost small" title="Save now (Ctrl+S)">Save</button>
+    </div>
+    <div class="right">
+      <label class="toggle" title="The headset switches to whatever map you open here"><input type="checkbox" id="followHeadset" checked /><span></span>Headset follows editor</label>
+      <span id="live" class="pill live off">Connecting…</span>
+      <button class="btn ghost" id="btnOpenGame" title="Open the game in a new tab (desktop preview)">Open game</button>
+      <div class="more" id="moreWrap">
+        <button class="btn ghost" id="btnMore" title="More commands" aria-haspopup="true" aria-expanded="false">More ▾</button>
+        <div class="more-panel">
+          <label class="toggle"><input type="checkbox" id="followHeadsetM" checked /><span></span>Headset follows editor</label>
+          <button class="btn" id="btnSaveM">Save now</button>
+          <button class="btn" id="btnOpenGameM">Open game</button>
+          <button class="btn" id="btnNewM">New level</button>
+          <button class="btn" id="btnDuplicateM">Duplicate</button>
+          <button class="btn" id="btnRenameM">Rename</button>
+          <button class="btn danger" id="btnDeleteM">Delete map</button>
+        </div>
+      </div>
+      <button class="btn primary" id="btnHeadset">Headset link</button>
+    </div>
+  </header>
+
+  <aside class="rail">
+    <div class="rail-scroll">
+    <div class="group"><span class="gl">Terrain</span>
+      <button class="tool" data-tool="raise" title="Raise (1)"><svg><use href="#i-raise"/></svg><span>Raise</span></button>
+      <button class="tool" data-tool="lower" title="Lower (2)"><svg><use href="#i-lower"/></svg><span>Lower</span></button>
+      <button class="tool" data-tool="smooth" title="Smooth (3)"><svg><use href="#i-smooth"/></svg><span>Smooth</span></button>
+      <button class="tool" data-tool="flatten" title="Flatten (4)"><svg><use href="#i-flatten"/></svg><span>Flatten</span></button>
+      <button class="tool" data-tool="erase" title="Reset to base slope (5)"><svg><use href="#i-erase"/></svg><span>Reset</span></button>
+      <button class="tool" data-tool="noise" title="Roughen (6)"><svg><use href="#i-noise"/></svg><span>Roughen</span></button>
+      <button class="tool" data-tool="kicker" title="Kicker stamp (7)"><svg><use href="#i-kicker"/></svg><span>Kicker</span></button>
+      <button class="tool" data-tool="bank" title="Berm (8)"><svg><use href="#i-bank"/></svg><span>Berm</span></button>
+    </div>
+    <div class="group"><span class="gl">Objects</span>
+      <button class="tool" data-tool="place" title="Place (Q)"><svg><use href="#i-place"/></svg><span>Place</span></button>
+      <button class="tool" data-tool="scatter" title="Scatter (W)"><svg><use href="#i-scatter"/></svg><span>Scatter</span></button>
+      <button class="tool" data-tool="eraseProps" title="Remove objects (E)"><svg><use href="#i-remove"/></svg><span>Remove</span></button>
+      <button class="tool" data-tool="select" title="Select / move (R)"><svg><use href="#i-select"/></svg><span>Select</span></button>
+    </div>
+    <div class="group"><span class="gl">Course</span>
+      <button class="tool" data-tool="start" title="Start gate (F)"><svg><use href="#i-start"/></svg><span>Start</span></button>
+      <button class="tool" data-tool="finish" title="Finish line (G)"><svg><use href="#i-finish"/></svg><span>Finish</span></button>
+    </div>
+    </div>
+    <div class="group bottom">
+      <button class="tool mini" id="btnUndo" title="Undo (Ctrl+Z)"><svg><use href="#i-undo"/></svg></button>
+      <button class="tool mini" id="btnRedo" title="Redo (Ctrl+Y)"><svg><use href="#i-redo"/></svg></button>
+      <button class="tool mini" id="btnFrameStart" title="Camera to start"><svg><use href="#i-frame"/></svg></button>
+      <button class="tool mini" id="btnFrameAll" title="Frame whole map (Home)"><svg><use href="#i-all"/></svg></button>
+    </div>
+  </aside>
+
+  <main class="viewwrap">
+    <canvas id="view"></canvas>
+    <div class="viewtools">
+      <label class="chip"><input type="checkbox" id="viewSlope" /><span>Slope colors</span></label>
+      <label class="chip"><input type="checkbox" id="envPreview" /><span>Preview lighting</span></label>
+      <label class="chip"><input type="checkbox" id="followRider" /><span>Follow rider</span></label>
+      <span id="riderInfo" class="riderinfo"></span>
+    </div>
+    <canvas id="minimap" width="220" height="440" title="Click to move the camera"></canvas>
+    <div class="camhint">Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size</div>
+  </main>
+
+  <aside class="panel">
+    <section id="secBrush">
+      <h3>Brush</h3>
+      <label>Size <input id="brushRadius" type="range" min="2" max="80" step="1" /><output></output></label>
+      <label id="brushStrengthRow">Strength <input id="brushStrength" type="range" min="0.05" max="1" step="0.05" /><output></output></label>
+      <label id="brushFalloffRow">Edge <input id="brushFalloff" type="range" min="0" max="1" step="0.05" /><output></output></label>
+    </section>
+    <section id="secKicker" class="hidden">
+      <h3>Kicker</h3>
+      <label>Lip height <input id="kickerHeight" type="range" min="0.5" max="5" step="0.1" /><output></output></label>
+      <p class="note">Faces downhill automatically. Brush size sets the length of the ramp.</p>
+    </section>
+    <section id="secBerm" class="hidden">
+      <h3>Berm</h3>
+      <div class="seg"><label><input type="radio" name="bermSide" value="1" checked /><span>Rises right of drag</span></label><label><input type="radio" name="bermSide" value="-1" /><span>Rises left of drag</span></label></div>
+      <p class="note">Drag in the direction riders travel through the turn. Build it up with a few passes.</p>
+    </section>
+    <section id="secProp" class="hidden">
+      <h3>Object</h3>
+      <div id="propGrid" class="propgrid"></div>
+      <label>Scale <input id="propScale" type="range" min="0.4" max="2.5" step="0.05" /><output></output></label>
+      <label class="check"><input type="checkbox" id="propRandomRot" checked /><span>Random rotation</span></label>
+      <label id="propRotRow" class="hidden">Rotation <input id="propRot" type="range" min="0" max="6.283" step="0.05" /><output></output></label>
+      <p class="note">Gates snap perpendicular to the fall line.</p>
+    </section>
+    <section id="secScatter" class="hidden">
+      <h3>Scatter</h3>
+      <label>Density <input id="scatterDensity" type="range" min="0.05" max="1" step="0.05" /><output></output></label>
+      <label>Min spacing <input id="scatterGap" type="range" min="2" max="20" step="1" /><output></output></label>
+      <label>Size variation <input id="propRandomScale" type="range" min="0" max="0.8" step="0.05" /><output></output></label>
+    </section>
+    <section id="secSelected" class="hidden">
+      <h3>Selected</h3>
+      <p id="selNone" class="note">Click an object in the viewport to select it. Drag to move it.</p>
+      <div id="selBody" class="hidden">
+        <div class="seltype" id="selType">—</div>
+        <label>Scale <input id="selScale" type="range" min="0.4" max="2.5" step="0.05" /><output></output></label>
+        <label>Rotation <input id="selRot" type="range" min="0" max="6.283" step="0.05" /><output></output></label>
+        <button class="btn ghost danger full" id="selDelete">Delete object</button>
+      </div>
+    </section>
+    <section id="secMarkers" class="hidden">
+      <h3>Course markers</h3>
+      <div class="grid2">
+        <label class="num">Start x <input id="startX" type="number" step="1" /></label>
+        <label class="num">Start z <input id="startZ" type="number" step="1" /></label>
+        <label class="num">Finish x <input id="finishX" type="number" step="1" /></label>
+        <label class="num">Finish z <input id="finishZ" type="number" step="1" /></label>
+        <label class="num">Finish width <input id="finishW" type="number" step="1" min="6" /></label>
+      </div>
+      <p class="note">Or click in the viewport with the Start / Finish tool.</p>
+    </section>
+    <section>
+      <h3>Map</h3>
+      <label class="text">Name <input id="mapName" type="text" /></label>
+      <label class="text">Description <input id="mapDesc" type="text" placeholder="One line shown in the game" /></label>
+      <label>Difficulty <select id="mapDifficulty"><option value="green">Green</option><option value="blue">Blue</option><option value="black">Black</option></select></label>
+      <label>Order <input id="mapOrder" type="number" step="1" class="short" /></label>
+      <p class="note" id="mapInfo"></p>
+    </section>
+    <section>
+      <h3>Environment</h3>
+      <label>Time of day <input id="envTime" type="range" min="0.05" max="0.95" step="0.01" /><output></output></label>
+      <label>Fog <input id="envFog" type="range" min="0" max="1" step="0.05" /><output></output></label>
+      <label>Snowfall <input id="envSnowfall" type="range" min="0" max="1" step="0.05" /><output></output></label>
+      <label>Wind <input id="envWind" type="range" min="0" max="1" step="0.05" /><output></output></label>
+      <label>Snow <select id="envSnow"><option value="groomed">Groomed</option><option value="powder">Powder</option><option value="ice">Icy</option><option value="spring">Spring slush</option></select></label>
+    </section>
+    <section>
+      <h3>Stats</h3>
+      <div id="stats" class="stats"></div>
+      <div class="histwrap"><div id="histogram" class="hist"></div><div class="histlbl"><span>0°</span><span>slope</span><span>50°</span></div></div>
+    </section>
+  </aside>
+
+  <footer class="statusbar">
+    <span id="coords">—</span>
+    <span id="hint" class="hint"></span>
+  </footer>
+</div>
+
+<dialog id="newLevel">
+  <form id="newLevelForm" method="dialog">
+    <h2>New level</h2>
+    <label class="text">Name <input id="newName" type="text" placeholder="e.g. Powder Bowl" autocomplete="off" required /></label>
+    <label>Preset <select id="newPreset"><option value="green">Green groomer</option><option value="blue">Blue run</option><option value="black">Black run</option><option value="park">Terrain park</option><option value="flat">Blank canvas</option></select></label>
+    <div class="grid2">
+      <label class="num">Length (m) <input id="newLength" type="number" value="640" min="80" max="2000" step="10" /></label>
+      <label class="num">Width (m) <input id="newWidth" type="number" value="190" min="40" max="600" step="10" /></label>
+      <label class="num">Base slope (°) <input id="newSlope" type="number" value="10" min="2" max="40" step="0.5" /></label>
+      <label>Resolution <select id="newSpacing"><option value="1">1 m (fine)</option><option value="2" selected>2 m</option><option value="3">3 m (big maps)</option></select></label>
+      <label class="num">Roughness <input id="newRough" type="number" value="0.3" min="0" max="2" step="0.1" /></label>
+      <label class="num">Valley sides <input id="newValley" type="number" value="1" min="0" max="3" step="0.5" /></label>
+      <label>Difficulty <select id="newDifficulty"><option value="green">Green</option><option value="blue">Blue</option><option value="black">Black</option></select></label>
+    </div>
+    <div class="actions"><button type="button" class="btn ghost close">Cancel</button><button type="submit" class="btn primary">Create</button></div>
+  </form>
+</dialog>
+
+<dialog id="promptDlg">
+  <form id="promptForm" method="dialog">
+    <h2 id="promptTitle">Rename</h2>
+    <p class="note" id="promptBody"></p>
+    <label class="text" id="promptFieldRow">Name <input id="promptField" type="text" autocomplete="off" /></label>
+    <div class="actions"><button type="button" class="btn ghost close">Cancel</button><button type="submit" class="btn primary" id="promptOk">OK</button></div>
+  </form>
+</dialog>
+
+<dialog id="headsetDlg">
+  <div class="headset">
+    <h2>Open on your headset</h2>
+    <div class="hs-row">
+      <img id="qr" alt="QR code" />
+      <div>
+        <p><b>Wi-Fi (same network):</b> in the Quest browser open</p>
+        <code id="httpsUrl"></code>
+        <p class="note">The first time, accept the self-signed certificate warning (Advanced → Proceed). Then press <b>Enter VR</b>.</p>
+        <p><b>USB / adb:</b> run <code>npm run adb-reverse</code> on this PC, then open</p>
+        <code id="httpUrl"></code>
+        <p class="note">Edits stream to the headset instantly while you work.</p>
+      </div>
+    </div>
+    <div class="actions"><button type="button" class="btn primary close">Done</button></div>
+  </div>
+</dialog>
+
+<div id="toast" class="toast"></div>
+<script type="module" src="./editor.js"></script>
+</body>
+</html>

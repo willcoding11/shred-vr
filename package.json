@@ -1,0 +1,20 @@
+{
+  "name": "shred-vr",
+  "version": "0.1.0",
+  "description": "WebXR snowboarding game where your hands are your feet, plus a live map editor",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "adb-reverse": "node server/adb-reverse.js",
+    "gen-maps": "node tools/generate-maps.js",
+    "render-maps": "node tools/render-maps.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "selfsigned": "^2.4.1",
+    "three": "^0.170.0",
+    "ws": "^8.18.0",
+    "qrcode": "^1.5.4"
+  }
+}

@@ -1,0 +1,163 @@
+:root {
+  --bg: #0b1220; --bg-2: #0f172a; --panel: #111a2e; --panel-2: rgba(255, 255, 255, 0.05); --line: rgba(255, 255, 255, 0.1);
+  --text: #f1f5f9; --muted: rgba(241, 245, 249, 0.58); --accent: #38bdf8; --accent-2: #f472b6; --green: #22c55e; --red: #ef4444; --amber: #fbbf24;
+  --radius: 12px; --font: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --rail: 84px; --panel-w: 320px; --top: 56px; --status: 30px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; overflow: hidden; }
+button, select, input { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+.app { display: grid; grid-template-columns: var(--rail) 1fr var(--panel-w); grid-template-rows: var(--top) 1fr var(--status); height: 100vh; }
+.top { grid-column: 1 / 4; display: flex; align-items: center; gap: 16px; padding: 0 14px; background: var(--bg-2); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
+.brand .sub { color: var(--muted); font-weight: 600; }
+.logo { width: 20px; height: 20px; border-radius: 6px; background: conic-gradient(from 210deg, var(--accent), var(--accent-2), var(--accent)); box-shadow: 0 0 14px rgba(56, 189, 248, 0.4); }
+.mapbar { display: flex; align-items: center; gap: 8px; flex: 1; }
+.mapbar .menu { display: flex; gap: 4px; }
+.right { display: flex; align-items: center; gap: 10px; }
+select { appearance: none; -webkit-appearance: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 7px 30px 7px 10px; font-weight: 600; cursor: pointer; min-width: 120px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+select:focus, input:focus { outline: 2px solid rgba(56, 189, 248, 0.55); outline-offset: 1px; }
+#mapSelect { min-width: 180px; font-size: 14px; }
+.btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 9px; padding: 7px 12px; font-weight: 600; cursor: pointer; transition: background 0.15s, transform 0.05s; white-space: nowrap; }
+.btn:hover { background: rgba(255, 255, 255, 0.11); } .btn:active { transform: translateY(1px); }
+.btn.small { padding: 5px 9px; font-size: 12px; }
+.btn.ghost { background: transparent; }
+.btn.ghost.danger:hover { background: rgba(239, 68, 68, 0.18); color: #fecaca; }
+.btn.primary { background: linear-gradient(135deg, var(--accent), #2563eb); border-color: transparent; color: #04121f; font-weight: 800; box-shadow: 0 4px 14px rgba(56, 189, 248, 0.3); }
+.btn.full { width: 100%; margin-top: 8px; }
+.btn:disabled { opacity: 0.35; cursor: default; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border: 1px solid var(--line); white-space: nowrap; }
+.pill.live::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #64748b; }
+.pill.live.on::before { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.pill.live.warn { color: #fcd34d; border-color: rgba(251, 191, 36, 0.5); }
+.pill.live.warn::before { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.pill.save.clean { color: var(--muted); } .pill.save.dirty { color: var(--amber); border-color: rgba(251, 191, 36, 0.4); } .pill.save.saving { color: var(--accent); }
+.toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.toggle input { display: none; }
+.toggle span { width: 30px; height: 18px; border-radius: 9px; background: rgba(255, 255, 255, 0.15); position: relative; transition: background 0.15s; }
+.toggle span::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+.toggle input:checked + span { background: var(--accent); } .toggle input:checked + span::after { transform: translateX(12px); }
+
+/* The rail scrolls its tool groups but keeps undo/redo/framing pinned: at 1280x800 the old
+   layout pushed the whole Course group and all four utility buttons below the fold, with no
+   scrollbar and nothing to suggest there was more. */
+.rail { background: var(--bg-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 8px 6px 0; gap: 6px; overflow: hidden; min-height: 0; }
+.rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; }
+.rail-scroll::-webkit-scrollbar { width: 6px; }
+.rail-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 3px; }
+.group { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.group.bottom { flex: 0 0 auto; margin-top: 0; border: 0; border-top: 1px solid var(--line);
+  flex-direction: row; flex-wrap: wrap; justify-content: center; padding: 6px 0; background: var(--bg-2); }
+.gl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); padding: 4px 6px 2px; }
+.tool { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 1px solid transparent; background: transparent; border-radius: 10px; padding: 6px 2px 5px; cursor: pointer; color: var(--muted); font-size: 10px; font-weight: 600; transition: background 0.12s, color 0.12s; }
+.tool svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tool:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.tool.active { background: rgba(56, 189, 248, 0.16); border-color: rgba(56, 189, 248, 0.45); color: #bae6fd; }
+.tool.mini { width: 32px; padding: 6px 0; } .tool.mini svg { width: 18px; height: 18px; }
+
+.viewwrap { position: relative; background: #0a0f1c; overflow: hidden; }
+#view { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+body[data-tool-kind=select] #view { cursor: default; }
+.viewtools { position: absolute; top: 12px; left: 12px; display: flex; gap: 8px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: rgba(10, 16, 30, 0.75); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px 5px 8px; cursor: pointer; font-weight: 600; font-size: 12px; backdrop-filter: blur(8px); color: var(--muted); }
+.chip input { accent-color: var(--accent); margin: 0; }
+.chip:has(input:checked) { color: var(--text); border-color: rgba(56, 189, 248, 0.5); }
+.riderinfo { font-size: 12px; color: #f9a8d4; font-weight: 600; }
+#minimap { position: absolute; right: 12px; bottom: 12px; width: 110px; height: 220px; border-radius: 10px; border: 1px solid var(--line); background: rgba(10, 16, 30, 0.7); cursor: pointer; }
+.camhint { position: absolute; left: 12px; bottom: 12px; font-size: 11px; color: var(--muted); background: rgba(10, 16, 30, 0.6); padding: 4px 8px; border-radius: 8px; }
+
+.panel { background: var(--bg-2); border-left: 1px solid var(--line); overflow: auto; padding: 4px 14px 20px; }
+.panel section { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.panel h3 { margin: 0 0 8px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); }
+.panel label { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; padding: 4px 0; color: var(--muted); font-weight: 500; }
+.panel label input[type=range] { width: 130px; accent-color: var(--accent); }
+.panel label output { width: 46px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; }
+.panel label select { grid-column: 2 / 4; min-width: 150px; padding: 5px 28px 5px 9px; }
+.panel label.text { grid-template-columns: 1fr; gap: 4px; }
+.panel label.text input, .panel label.num input, .panel input.short { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; color: var(--text); width: 100%; }
+.panel input.short { width: 80px; grid-column: 2 / 4; }
+.panel label.num { grid-template-columns: 1fr; gap: 3px; font-size: 12px; }
+.panel label.check { grid-template-columns: auto 1fr; justify-content: start; }
+.panel label.check input { accent-color: var(--accent); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.note { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 6px 0 0; }
+.seg { display: flex; gap: 6px; }
+.seg label { flex: 1; display: flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; cursor: pointer; font-size: 12px; }
+.seg label:has(input:checked) { border-color: rgba(56, 189, 248, 0.5); background: rgba(56, 189, 248, 0.1); color: var(--text); }
+.seg input { accent-color: var(--accent); margin: 0; }
+.propgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 6px; }
+.proptype { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 4px; border: 1px solid var(--line); background: var(--panel-2); border-radius: 9px; cursor: pointer; font-size: 10.5px; font-weight: 600; color: var(--muted); }
+.proptype .swatch { width: 18px; height: 18px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15); }
+.proptype:hover { color: var(--text); background: rgba(255, 255, 255, 0.09); }
+.proptype.active { border-color: rgba(56, 189, 248, 0.6); background: rgba(56, 189, 248, 0.14); color: #bae6fd; }
+.seltype { font-weight: 700; font-size: 14px; margin: 2px 0 6px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.stat { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); padding: 3px 0; border-bottom: 1px dashed rgba(255, 255, 255, 0.07); }
+.stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+.histwrap { margin-top: 10px; }
+.hist { display: flex; align-items: flex-end; gap: 3px; height: 44px; }
+.hist .bar { flex: 1; height: 100%; display: flex; align-items: flex-end; background: rgba(255, 255, 255, 0.04); border-radius: 3px; }
+.hist .bar i { display: block; width: 100%; background: linear-gradient(to top, #38bdf8, #a78bfa); border-radius: 3px; min-height: 1px; }
+.histlbl { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 3px; }
+.statusbar { grid-column: 1 / 4; display: flex; align-items: center; gap: 18px; padding: 0 14px; font-size: 12px; color: var(--muted); background: var(--bg-2); border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.hint { color: rgba(241, 245, 249, 0.4); }
+
+dialog { border: 1px solid var(--line); border-radius: 18px; background: #0f172a; color: var(--text); padding: 22px 24px; width: 460px; max-width: 92vw; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
+dialog::backdrop { background: rgba(3, 6, 14, 0.7); backdrop-filter: blur(4px); }
+dialog h2 { margin: 0 0 14px; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+dialog label { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 8px; padding: 5px 0; color: var(--muted); font-weight: 500; }
+dialog label.text, dialog label.num { grid-template-columns: 1fr; gap: 4px; }
+dialog input, dialog select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; color: var(--text); width: 100%; min-width: 0; }
+dialog .grid2 { margin-top: 4px; }
+dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.headset { width: 560px; max-width: 88vw; }
+.hs-row { display: flex; gap: 18px; align-items: flex-start; }
+.hs-row img { width: 180px; height: 180px; border-radius: 12px; background: #fff; padding: 6px; }
+.hs-row p { margin: 4px 0; }
+.hs-row code { display: block; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 4px 0 8px; user-select: all; }
+
+.toast { position: fixed; left: 50%; bottom: 48px; transform: translate(-50%, 12px); background: #1e293b; border: 1px solid var(--line); padding: 9px 14px; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 20; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.bad { background: #7f1d1d; }
+/* Narrow windows fold commands into the "More" menu rather than deleting them: at 1280 px
+   the old rules hid Delete entirely, and it has no keyboard shortcut. */
+.more { position: relative; }
+.more > .btn { padding: 7px 10px; }
+.more-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 12; display: none; flex-direction: column; gap: 4px;
+  background: #16203a; border: 1px solid var(--line); border-radius: 12px; padding: 6px; min-width: 190px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); }
+.more.open .more-panel { display: flex; }
+.more-panel .btn { justify-content: flex-start; text-align: left; width: 100%; background: transparent; border-color: transparent; }
+.more-panel .btn:hover { background: rgba(255, 255, 255, 0.09); }
+.more-panel label.toggle { padding: 7px 10px; color: var(--text); }
+.more { display: none; }
+@media (max-width: 1340px) {
+  .more { display: block; }
+  .top > .right > .toggle, #btnOpenGame, .mapbar .menu #btnRename, .mapbar .menu #btnDelete, .mapbar .menu #btnDuplicate { display: none; }
+}
+@media (max-width: 1100px) { :root { --panel-w: 280px; } .top { gap: 10px; } #mapSelect { min-width: 140px; } .brand .sub { display: none; } }
+/* On a short screen the icons alone still read, and everything fits without scrolling. */
+@media (max-height: 860px) {
+  :root { --rail: 58px; }
+  .tool span { display: none; }
+  .tool { padding: 5px 2px; } .tool svg { width: 20px; height: 20px; }
+  .group { padding-bottom: 3px; gap: 1px; }
+  .gl { display: none; }
+}
+@media (max-width: 980px) { :root { --panel-w: 250px; --rail: 72px; } .mapbar .menu #btnNew { display: none; } #btnSave { display: none; } }
+/* Below this the three-column layout stops working: stack the panel under the viewport. */
+@media (max-width: 720px) {
+  :root { --rail: 58px; }
+  .app { grid-template-columns: var(--rail) 1fr; grid-template-rows: var(--top) minmax(220px, 1fr) minmax(200px, 42vh) var(--status); }
+  .top { grid-column: 1 / 3; grid-row: 1; }
+  /* the rail has to be placed explicitly or it auto-flows into a row of its own and
+     squeezes the panel down to nothing */
+  .rail { grid-column: 1 / 2; grid-row: 2 / 3; }
+  .viewwrap { grid-column: 2 / 3; grid-row: 2 / 3; }
+  .panel { grid-column: 1 / 3; grid-row: 3 / 4; border-left: 0; border-top: 1px solid var(--line); }
+  .statusbar { grid-column: 1 / 3; grid-row: 4 / 5; }
+  #minimap { width: 74px; height: 148px; }
+  .camhint { display: none; }
+  .tool span { display: none; } .tool { padding: 9px 2px; }
+}

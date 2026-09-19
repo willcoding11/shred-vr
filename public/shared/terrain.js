@@ -1,6 +1,7 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
 import { gridToWorld, slopeDegAt, heightAt, normalAt } from './mapformat.js';
+import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
 
@@ -49,16 +50,24 @@ function curvature(H, w, h, x, z, r) {
 }
 
 export class Terrain {
-  constructor(map, { shadows = true, texture = true, relief = 1 } = {}) {
-    this.relief = relief;
+  constructor(map, { shadows = true, texture = true, relief = 1, quality = 'fast' } = {}) {
+    this.relief = relief; this.quality = quality;
     this.map = map;
     this.geometry = new THREE.BufferGeometry();
     this.material = new THREE.MeshStandardMaterial({
       vertexColors: true, metalness: 0.0,
       map: texture ? makeSnowTexture() : null,
       // snow is not shiny, but a dead-matte surface gives the sun nothing to shape it with
-      roughness: 0.82,
+      roughness: quality === 'real' ? 0.66 : 0.82,
     });
+    if (quality === 'real') {
+      // Micro-relief and the two things a standard material cannot do for snow on its own.
+      const nm = snowNormalMap(512);
+      nm.repeat.set(6, 6);
+      this.material.normalMap = nm;
+      this.material.normalScale = new THREE.Vector2(0.55, 0.55);
+      patchSnowMaterial(this.material, { sparkle: 1, subsurface: 1 });
+    }
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = 'terrain';
     this.mesh.receiveShadow = shadows;

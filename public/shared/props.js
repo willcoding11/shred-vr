@@ -1,5 +1,6 @@
 // Low-poly prop geometry + instanced rendering shared by the game and the editor.
 import * as THREE from 'three';
+import { realConifer, realBirch } from './realism.js';
 import { mergeGeometries as _merge } from 'three/addons/utils/BufferGeometryUtils.js';
 // Merge that tolerates a mix of indexed / non-indexed parts.
 const mergeGeometries = (parts) => _merge(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
@@ -115,11 +116,17 @@ function hut() {
   return mergeGeometries(parts);
 }
 
-let cache = null;
-export function propGeometries() {
-  if (cache) return cache;
+let cache = null, cacheQuality = null;
+export function propGeometries(quality = 'fast') {
+  if (cache && cacheQuality === quality) return cache;
+  if (cache) for (const g of Object.values(cache)) g.dispose();
+  cacheQuality = quality;
+  const real = quality === 'real';
+  const rr = (() => { let s = 12345; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; })();
   cache = {
-    pine: pine(), fir: fir(), birch: birch(),
+    pine: real ? mergeGeometries(realConifer({ height: 8.4, rand: rr, snowy: 0.72 })) : pine(),
+    fir: real ? mergeGeometries(realConifer({ height: 10.2, rand: rr, snowy: 0.8, dark: true })) : fir(),
+    birch: real ? mergeGeometries(realBirch({ height: 7, rand: rr })) : birch(),
     rock: rockGeo(1.0, '#6b7280', 1), boulder: rockGeo(2.4, '#4b5563', 7),
     gateA: gate('#ef4444'), gateB: gate('#3b82f6'),
     flag: flag(), fence: fence(), lamp: lamp(), sign: sign(), snowman: snowman(), hut: hut(),
@@ -130,8 +137,8 @@ export function propGeometries() {
 
 // Renders map.props as one InstancedMesh per geometry. Call sync() after any change.
 export class PropRenderer {
-  constructor(map, { shadows = true } = {}) {
-    this.map = map; this.shadows = shadows;
+  constructor(map, { shadows = true, quality = 'fast' } = {}) {
+    this.map = map; this.shadows = shadows; this.quality = quality;
     this.group = new THREE.Group(); this.group.name = 'props';
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
@@ -141,7 +148,7 @@ export class PropRenderer {
   setMap(map) { this.map = map; this.sync(); }
   geoKey(p, gateIndex) { return p.t === 'gate' ? (gateIndex % 2 ? 'gateB' : 'gateA') : p.t; }
   sync() {
-    const geos = propGeometries();
+    const geos = propGeometries(this.quality);
     const buckets = {};
     let gi = 0;
     for (const p of this.map.props) {

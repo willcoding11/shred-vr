@@ -1,5 +1,6 @@
 // Sky, sun, distant peaks, fog and falling snow. Shared by game + editor.
 import * as THREE from 'three';
+import { realSkyVert, realSkyFrag } from './realism.js';
 import { fbm } from './mapformat.js';
 
 const skyVert = `
@@ -19,7 +20,8 @@ void main(){
 }`;
 
 export class Scenery {
-  constructor(scene, { shadows = true, shadowSize = 2048, mountains = true } = {}) {
+  constructor(scene, { shadows = true, shadowSize = 2048, mountains = true, quality = 'fast' } = {}) {
+    this.quality = quality;
     this.scene = scene;
     this.sun = new THREE.DirectionalLight(0xffffff, 2.6);
     this.sun.castShadow = shadows;
@@ -37,13 +39,18 @@ export class Scenery {
     this.hemi = new THREE.HemisphereLight(0x9ec4ff, 0xb9c6d6, 0.38);
     scene.add(this.hemi);
 
+    const real = quality === 'real';
     this.skyUniforms = {
       zenith: { value: new THREE.Color(0x3d7dd8) }, horizon: { value: new THREE.Color(0xdbe8f7) },
       sunDir: { value: new THREE.Vector3(0.3, 0.6, 0.2).normalize() }, sunColor: { value: new THREE.Color(0xfff2d0) },
       sunSize: { value: 1.0 },
+      turbidity: { value: 2.0 }, exposure: { value: 1.25 }, cloud: { value: 0.45 }, time: { value: 0 },
     };
-    this.sky = new THREE.Mesh(new THREE.SphereGeometry(4000, 32, 16), new THREE.ShaderMaterial({
-      uniforms: this.skyUniforms, vertexShader: skyVert, fragmentShader: skyFrag, side: THREE.BackSide, depthWrite: false, fog: false,
+    this.sky = new THREE.Mesh(new THREE.SphereGeometry(4000, real ? 64 : 32, real ? 32 : 16), new THREE.ShaderMaterial({
+      uniforms: this.skyUniforms,
+      vertexShader: real ? realSkyVert : skyVert,
+      fragmentShader: real ? realSkyFrag : skyFrag,
+      side: THREE.BackSide, depthWrite: false, fog: false,
     }));
     this.sky.renderOrder = -10; this.sky.frustumCulled = false;
     scene.add(this.sky);
@@ -64,6 +71,20 @@ export class Scenery {
     if (!this.mountains) return;
     const floor = this.mountains.userData.floor;
     if (floor) floor.position.y = lowestY - 12 - this.mountains.userData.baseY;
+  }
+
+  // Swap the look without tearing the scene down. Only the sky material and the shadow
+  // resolution actually differ; the terrain and props are rebuilt by the caller.
+  setQuality(q) {
+    if (q === this.quality) return;
+    this.quality = q;
+    const real = q === 'real';
+    this.sky.material.vertexShader = real ? realSkyVert : skyVert;
+    this.sky.material.fragmentShader = real ? realSkyFrag : skyFrag;
+    this.sky.material.needsUpdate = true;
+    if (this.sun.shadow) { this.sun.shadow.mapSize.set(real ? 4096 : 2048, real ? 4096 : 2048); this.sun.shadow.map?.dispose(); this.sun.shadow.map = null; }
+    this.hemi.intensity = real ? 0.30 : 0.38;
+    this.setEnv({});
   }
 
   setEnv(env) {
@@ -94,6 +115,7 @@ export class Scenery {
 
   // Keep the shadow frustum and the sky centred on the viewer.
   update(dt, viewerPos, camera) {
+    this.skyUniforms.time.value += dt;
     this.sunTarget.position.copy(viewerPos);
     this.sun.position.copy(viewerPos).addScaledVector(this.sunDir, 220);
     this.sky.position.copy(camera.position);

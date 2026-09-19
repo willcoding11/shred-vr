@@ -16,7 +16,7 @@ import { Hud, VrMenu, Vignette, fmtTime } from './hud.js';
 import { GameAudio } from './audio.js';
 
 const DEFAULTS = {
-  regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1,
+  regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1, quality: 'fast',
   rollGain: 1.0, smoothing: 0.06, sound: true, pixelRatio: 1, boardLength: 1.5, slowMoScale: 0.35,
 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('shred.settings') || '{}') };
@@ -38,7 +38,7 @@ renderer.xr.setFoveation(1);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
 const rig = new THREE.Group(); rig.name = 'rig'; rig.add(camera); scene.add(rig);
-const scenery = new Scenery(scene, { shadows: settings.shadows });
+const scenery = new Scenery(scene, { shadows: settings.shadows, quality: settings.quality });
 const vignette = new Vignette(camera);
 const audio = new GameAudio();
 const hud = new Hud();
@@ -92,9 +92,9 @@ async function loadMapById(id, { keepPosition = false } = {}) {
 function applyMap(m, keepPosition = false) {
   const same = map && map.id === m.id;
   map = m;
-  if (!terrain) { terrain = new Terrain(map, { shadows: settings.shadows, relief: settings.relief }); scene.add(terrain.mesh); }
+  if (!terrain) { terrain = new Terrain(map, { shadows: settings.shadows, relief: settings.relief, quality: settings.quality }); scene.add(terrain.mesh); }
   else terrain.setMap(map);
-  if (!props) { props = new PropRenderer(map, { shadows: settings.shadows }); scene.add(props.group); }
+  if (!props) { props = new PropRenderer(map, { shadows: settings.shadows, quality: settings.quality }); scene.add(props.group); }
   else props.setMap(map);
   if (lifts) { scene.remove(lifts.group); lifts.dispose(); }
   lifts = new LiftRenderer(map, { shadows: settings.shadows });
@@ -292,6 +292,28 @@ bindSetting('setSound', 'sound', (v) => v === 'on', (v) => (v ? 'on' : 'off'), (
 bindSetting('setSlowMo', 'slowMoScale', Number, String);
 bindSetting('setLegs', 'legRate', Number, String);
 bindSetting('setRelief', 'relief', Number, String, () => { if (terrain) { terrain.relief = settings.relief; terrain.recolor(); } });
+bindSetting('setQuality', 'quality', (v) => v, (v) => v, applyQuality);
+
+// The "Real" preset. Appearance only: nothing here is readable by the physics, and the board
+// behaves identically either way. It costs a filmic tone curve, a scattering sky, a snow shader
+// that sparkles and scatters under its own surface, denser trees and a bigger shadow map.
+function applyQuality() {
+  const real = settings.quality === 'real';
+  renderer.toneMapping = real ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  renderer.toneMappingExposure = real ? 1.35 : 1.0;
+  scenery.setQuality(settings.quality);
+  if (terrain) {
+    scene.remove(terrain.mesh); terrain.geometry.dispose(); terrain.material.dispose();
+    terrain = new Terrain(map, { shadows: settings.shadows, relief: settings.relief, quality: settings.quality });
+    scene.add(terrain.mesh);
+    if (rider) rider.terrain = terrain;
+  }
+  if (props) {
+    scene.remove(props.group);
+    props = new PropRenderer(map, { shadows: settings.shadows, quality: settings.quality });
+    scene.add(props.group);
+  }
+}
 bindSetting('setPixel', 'pixelRatio', Number, String, applyRenderScale);
 function applyRenderScale() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * settings.pixelRatio);
@@ -417,6 +439,10 @@ renderer.setAnimationLoop(() => {
   if (propSyncT > 0) { propSyncT -= dt; if (propSyncT <= 0) { props.sync(); rebuildMarkers(); } }
 
   if (lifts) lifts.update(dt);
+  // the snow shader needs to know where the sun is, or its sparkle and its blue shadows point
+  // somewhere the light is not
+  const su = terrain?.material?.userData?.realUniforms;
+  if (su && scenery.sunDir) su.uSunDir.value.copy(scenery.sunDir);
   camera.getWorldPosition(tmpV);
   scenery.update(dt, inXR ? rider.boardPos : tmpV, { position: tmpV });
   renderer.render(scene, camera);
@@ -563,8 +589,8 @@ function stepVR(dtReal, now) {
 
 // Desktop: a slow look around the map you are editing. No riding, by design.
 function stepPreview(dt) {
-  preview.angle += dt * 0.06;
-  const s = map.start;
+  if (preview.spin !== false) preview.angle += dt * 0.06;
+  const s = preview.at || map.start;
   const y = terrain.heightAt(s.x, s.z);
   const yaw = preview.yaw + preview.angle, pitch = preview.pitch;
   rig.position.set(
@@ -574,12 +600,17 @@ function stepPreview(dt) {
   );
   rig.rotation.set(0, 0, 0);
   camera.position.set(0, 0, 0);
-  camera.lookAt(s.x, y + 4, s.z + 45);
+  camera.lookAt(s.x, y + (preview.aim ?? 4), s.z + (preview.ahead ?? 45));
   boardGroup.visible = false;
   for (const b of bootMarks) b.visible = false;
   updateDomHud(hudState());
 }
 function framePreview() { preview.angle = 0; }
+
+// Look at a map from somewhere the orbit does not reach. Desktop preview only, and it is here
+// because reviewing a mountain from one fixed circle around the start tells you almost nothing
+// about it. Call from the console: shredCam({ at:{x,z}, dist, yaw, pitch, spin:false }).
+window.shredCam = (o = {}) => { Object.assign(preview, o); if (o.at === null) preview.at = null; return preview; };
 canvas.addEventListener('pointerdown', (e) => { if (!inXR) { preview.drag = true; preview.lastX = e.clientX; preview.lastY = e.clientY; } });
 window.addEventListener('pointerup', () => { preview.drag = false; });
 window.addEventListener('pointermove', (e) => {

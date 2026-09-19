@@ -21,6 +21,7 @@ export const LIFT = {
                       // up a 900 m line then takes five and a half minutes, which is a long
                       // time to sit in a headset even with a skip button.
   boardRadius: 9,     // m around the base station where a chair will pick you up
+  towerMax: 24,       // m, how tall a pylon may grow to clear the ground under its span
 };
 
 // Everything derived from the two end points. Call once per map load.
@@ -37,12 +38,35 @@ export function buildLine(map, lift) {
     const h = i === 0 || i === n ? LIFT.towerH * 0.62 : LIFT.towerH;
     towers.push({ x, z, ground, top: ground + h, h });
   }
-  return {
+  const line = {
     id: lift.id, name: lift.name || 'Lift', lift, len, n, towers,
     dir: { x: dx / len, z: dz / len },
     side: { x: -dz / len, z: dx / len },       // across the line, for the two cables
     rideTime: len / LIFT.speed,
   };
+
+  // Grow the towers until the cable clears the ground the whole way. A straight span between two
+  // tower tops cuts straight through any bulge between them, and on real terrain there is always
+  // a bulge: without this a lift dropped on a new map hangs its chairs through the hillside, and
+  // the only way to find out is to ride it. Six passes is enough for anything sane.
+  const need = LIFT.hanger + 2.0;
+  const probe = new THREE.Vector3();
+  for (let pass = 0; pass < 6; pass++) {
+    let worst = 0, at = 0;
+    for (let k = 0; k <= n * 12; k++) {
+      const t = k / (n * 12);
+      cableAt(line, t, 0, probe);
+      const deficit = need - (probe.y - heightAt(map, probe.x, probe.z));
+      if (deficit > worst) { worst = deficit; at = t; }
+    }
+    if (worst <= 0.02) break;
+    const i = Math.min(n - 1, Math.floor(at * n));
+    for (const k of [i, i + 1]) {
+      const add = Math.min(worst, LIFT.towerMax - towers[k].h);
+      towers[k].h += add; towers[k].top += add;
+    }
+  }
+  return line;
 }
 
 // A point on the cable. `t` runs 0 at the base to 1 at the top; `side` is -1 or +1 for the two

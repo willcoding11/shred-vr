@@ -1,0 +1,251 @@
+// The "Real" look. Everything in here is appearance only -- nothing it does can be felt through
+// the board, and the physics never reads any of it.
+//
+// A note on what is and is not possible here, because the word that usually comes up is "RTX":
+// this runs in WebGL 2 in a browser, on a standalone headset. There is no ray tracing available
+// and there is not going to be. What actually moves the needle on snow is different anyway:
+// snow is a bright, rough, forward-scattering surface under a very blue sky, and the three
+// things that make it read as real are the SKY it is lit by, the way light bounces around
+// INSIDE it, and the glitter of individual crystals. Those are what this file does.
+import * as THREE from 'three';
+
+// ---------------------------------------------------------------- sky
+// Single-scattering Rayleigh + Mie, which is what gives you a sky that is deep blue overhead,
+// pale at the horizon, warm around the sun and warmer still when the sun is low -- all of it
+// falling out of the physics instead of being three colours dialled in by hand.
+export const realSkyVert = `
+varying vec3 vDir;
+varying vec3 vWorld;
+void main(){
+  vWorld = (modelMatrix * vec4(position,1.0)).xyz;
+  vDir = normalize(vWorld - cameraPosition);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+}`;
+
+export const realSkyFrag = `
+uniform vec3 sunDir; uniform vec3 sunColor; uniform float sunSize;
+uniform float turbidity; uniform float exposure; uniform float cloud; uniform float time;
+varying vec3 vDir;
+varying vec3 vWorld;
+
+float miePhase(float c, float g){
+  float g2 = g * g;
+  return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
+}
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y);
+}
+float fbm(vec2 p){
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) { v += a * vnoise(p); p *= 2.03; a *= 0.5; }
+  return v;
+}
+
+void main(){
+  vec3 d = normalize(vDir);
+  float h = clamp(d.y, -0.15, 1.0);
+  float elev = clamp(sunDir.y, -0.1, 1.0);          // how high the sun is, 0 at the horizon
+  float day = smoothstep(-0.02, 0.32, elev);        // 0 at dawn, 1 in the middle of the day
+
+  // The gradient. A physically derived sky is the honest way to do this and I tried it; the
+  // single-scattering form is very sensitive to how you scale the optical depths and it went
+  // olive before it went blue. This is the same shape the physics produces -- deep and saturated
+  // overhead, pale and dusty at the horizon, warm on the sun's side and warmer the lower it is --
+  // reached by interpolation between measured-looking endpoints, which cannot go wrong.
+  vec3 zenithDay  = vec3(0.115, 0.310, 0.680);
+  vec3 zenithDusk = vec3(0.105, 0.150, 0.360);
+  vec3 horizDay   = vec3(0.640, 0.760, 0.920);
+  vec3 horizDusk  = vec3(0.960, 0.620, 0.380);
+  vec3 zen = mix(zenithDusk, zenithDay, day);
+  vec3 hor = mix(horizDusk, horizDay, day);
+  // Turbidity washes the whole thing out toward white, which is exactly what haze does.
+  float haze = clamp((turbidity - 1.6) * 0.30, 0.0, 0.5);
+  zen = mix(zen, vec3(0.70, 0.78, 0.88), haze * 0.6);
+  hor = mix(hor, vec3(0.86, 0.89, 0.93), haze);
+
+  float t = pow(1.0 - max(h, 0.0), 3.4);
+  vec3 col = mix(zen, hor, t);
+
+  float c = dot(d, sunDir);
+  // Mie forward-scatter: the bright disc of sky around the sun, which widens as it drops.
+  float mie = miePhase(c, 0.76 - 0.12 * (1.0 - day));
+  vec3 warm = mix(vec3(1.0, 0.58, 0.30), vec3(1.0, 0.94, 0.84), day);
+  col += warm * mie * (0.55 + 1.4 * (1.0 - day)) * (0.35 + 0.65 * t);
+  col += warm * pow(max(c, 0.0), 8.0) * 0.10;
+
+  // the sun itself
+  float ang = acos(clamp(c, -1.0, 1.0));
+  float disc = 1.0 - smoothstep(0.0040 * sunSize, 0.0056 * sunSize, ang);
+  float glow = exp(-ang * 26.0) * 0.55;
+  col += sunColor * (disc * 12.0 + glow) * (0.35 + 0.65 * day);
+
+  // a thin high cloud deck, drifting
+  if (cloud > 0.001 && d.y > 0.015) {
+    vec2 uv = d.xz / max(d.y, 0.07) * 0.085 + vec2(time * 0.0014, time * 0.0008);
+    float n = fbm(uv * 1.6);
+    float cover = smoothstep(0.54 - cloud * 0.24, 0.80, n) * smoothstep(0.015, 0.20, d.y);
+    // lit from the sun's side, shaded away from it
+    float side = clamp(dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(sunDir.x, 0.0, sunDir.z))) * 0.5 + 0.5, 0.0, 1.0);
+    vec3 lit = mix(vec3(0.58, 0.62, 0.70), mix(vec3(1.0, 0.80, 0.62), vec3(1.0, 0.99, 0.97), day), side);
+    col = mix(col, lit, cover * 0.80);
+  }
+
+  // haze band at the horizon so it does not end in a line
+  col = mix(col, mix(vec3(0.80, 0.68, 0.58), vec3(0.84, 0.88, 0.93), day), smoothstep(0.04, -0.12, d.y) * 0.92);
+
+  col *= exposure;
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
+}`;
+
+// ---------------------------------------------------------------- snow
+// A micro-relief normal map. Snow is never geometrically flat: it has wind texture, the tracks of
+// everything that has been over it, and crystal facets, and at a grazing sun all of that is what
+// you are actually looking at.
+export function snowNormalMap(size = 512) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d');
+  const img = g.createImageData(size, size), d = img.data;
+  const hgt = new Float32Array(size * size);
+  const h = (x, y) => hgt[((y + size) % size) * size + ((x + size) % size)];
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    // wind ripple along one axis, plus fine grain
+    const ripple = Math.sin(y * 0.22 + Math.sin(x * 0.03) * 2.2) * 0.5;
+    const grain = (Math.sin(x * 2.1 + y * 1.3) + Math.sin(x * 0.7 - y * 3.1)) * 0.18;
+    hgt[y * size + x] = ripple + grain + Math.random() * 0.5;
+  }
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dx = h(x + 1, y) - h(x - 1, y), dy = h(x, y + 1) - h(x, y - 1);
+    const nx = -dx * 0.06, ny = -dy * 0.06, nz = 1;
+    const l = Math.hypot(nx, ny, nz), i = (y * size + x) * 4;
+    d[i] = (nx / l * 0.5 + 0.5) * 255; d[i + 1] = (ny / l * 0.5 + 0.5) * 255;
+    d[i + 2] = (nz / l * 0.5 + 0.5) * 255; d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return t;
+}
+
+// Two things a standard material will not do for snow on its own, injected into its shader:
+//
+//   SPARKLE. Snow is a heap of flat crystals, and a few of them per square metre happen to be
+//   angled straight at you. That is the glitter, and it is a specular spike from a surface that
+//   is otherwise rough, so no amount of roughness tuning produces it.
+//
+//   SUBSURFACE. Light goes into snow, bounces around and comes back out, which is why shadows on
+//   snow are blue and bright rather than dark and grey. Without it snow lit by a low sun looks
+//   like grey plastic.
+export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1 } = {}) {
+  mat.userData.realUniforms = {
+    uSparkle: { value: sparkle },
+    uSubsurface: { value: subsurface },
+    uSunDir: { value: new THREE.Vector3(0.3, 0.6, 0.2) },
+    uSkyTint: { value: new THREE.Color(0x6f9fe0) },
+  };
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, mat.userData.realUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRealWorld;\nvarying vec3 vRealNormal;')
+      .replace('#include <worldpos_vertex>',
+        '#include <worldpos_vertex>\n  vRealWorld = (modelMatrix * vec4(transformed,1.0)).xyz;\n  vRealNormal = normalize(mat3(modelMatrix) * objectNormal);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vRealWorld;
+varying vec3 vRealNormal;
+uniform float uSparkle; uniform float uSubsurface; uniform vec3 uSunDir; uniform vec3 uSkyTint;
+float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
+      .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+{
+  vec3 V = normalize(cameraPosition - vRealWorld);
+  vec3 N = normalize(vRealNormal);
+  // Subsurface: snow that is facing away from the sun is not dark, it is blue. The wrap term is
+  // the cheap stand-in for light that went in somewhere else and came back out here.
+  float wrap = clamp((dot(N, uSunDir) + 0.55) / 1.55, 0.0, 1.0);
+  float ao = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+  gl_FragColor.rgb += uSkyTint * uSubsurface * 0.16 * (1.0 - wrap) * ao;
+  // and a touch of forward scatter when you are looking toward the sun across the surface
+  float fwd = pow(clamp(dot(V, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 6.0);
+  gl_FragColor.rgb += vec3(0.9, 0.93, 1.0) * uSubsurface * 0.07 * fwd;
+
+  // Sparkle: pick out the handful of crystals per patch that are aimed at you.
+  vec3 cell = floor(vRealWorld * 34.0);
+  float r1 = rhash(cell), r2 = rhash(cell + 7.1), r3 = rhash(cell + 19.3);
+  vec3 facet = normalize(N + (vec3(r1, r2, r3) - 0.5) * 1.9);
+  vec3 H = normalize(uSunDir + V);
+  float spec = pow(max(dot(facet, H), 0.0), 420.0);
+  float rare = step(0.86, r3);
+  float grazing = smoothstep(0.0, 0.35, dot(N, uSunDir));
+  gl_FragColor.rgb += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * 2.6;
+}`);
+  };
+  mat.needsUpdate = true;
+  return mat;
+}
+
+// ---------------------------------------------------------------- trees
+// Conifers built as a trunk plus many thin drooping tiers rather than three stacked cones. The
+// silhouette is the whole thing at a distance: a real spruce is a ragged spike, not a party hat.
+function tierGeo(r, hh, droop, seg) {
+  const g = new THREE.ConeGeometry(r, hh, seg, 1, true);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i);
+    if (y < 0) {                                   // the skirt of each tier bends down and out
+      const x = p.getX(i), z = p.getZ(i);
+      const k = 1 + droop * 0.35;
+      p.setXYZ(i, x * k, y - droop * 0.55 * hh, z * k);
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+export function realConifer({ height = 9, rand = Math.random, snowy = 0.7, dark = false } = {}) {
+  const parts = [];
+  const col = (g, hex) => {
+    const c = new THREE.Color(hex), a = new Float32Array(g.attributes.position.count * 3);
+    for (let i = 0; i < a.length; i += 3) { a[i] = c.r; a[i + 1] = c.g; a[i + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+    return g;
+  };
+  const trunkH = height * 1.02;
+  parts.push(col(new THREE.CylinderGeometry(height * 0.012, height * 0.045, trunkH, 6).translate(0, trunkH / 2, 0), '#43331f'));
+  const tiers = Math.round(9 + rand() * 4);
+  for (let i = 0; i < tiers; i++) {
+    const t = i / (tiers - 1);
+    const y = height * (0.16 + t * 0.80);
+    const r = height * (0.30 * Math.pow(1 - t, 1.25) + 0.025) * (0.86 + rand() * 0.28);
+    const hh = height * (0.15 + 0.07 * (1 - t));
+    const shade = dark ? (i % 2 ? '#1b4a32' : '#20573a') : (i % 2 ? '#26623c' : '#2c7046');
+    const g = col(tierGeo(r, hh, 0.5 + rand() * 0.5, 7), shade).translate((rand() - 0.5) * r * 0.12, y, (rand() - 0.5) * r * 0.12);
+    parts.push(g);
+    // snow sitting on the upper side of the branches
+    if (rand() < snowy) {
+      parts.push(col(tierGeo(r * 0.82, hh * 0.30, 0.3, 7), '#f2f6ff').translate(0, y + hh * 0.30, 0));
+    }
+  }
+  // a bare leader at the very top
+  parts.push(col(new THREE.ConeGeometry(height * 0.035, height * 0.14, 6), '#2c7046').translate(0, height * 1.0, 0));
+  return parts;
+}
+
+export function realBirch({ height = 7, rand = Math.random } = {}) {
+  const parts = [];
+  const col = (g, hex) => {
+    const c = new THREE.Color(hex), a = new Float32Array(g.attributes.position.count * 3);
+    for (let i = 0; i < a.length; i += 3) { a[i] = c.r; a[i + 1] = c.g; a[i + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+    return g;
+  };
+  parts.push(col(new THREE.CylinderGeometry(height * 0.016, height * 0.032, height, 6).translate(0, height / 2, 0), '#dfe3e6'));
+  for (let i = 0; i < 7; i++) {
+    const t = 0.45 + (i / 7) * 0.5;
+    const len = height * (0.34 - t * 0.16), a = rand() * 6.28;
+    const g = new THREE.CylinderGeometry(height * 0.004, height * 0.010, len, 4)
+      .rotateZ(0.7 + rand() * 0.4).rotateY(a).translate(Math.cos(a) * len * 0.3, height * t, Math.sin(a) * len * 0.3);
+    parts.push(col(g, '#cfd6da'));
+  }
+  return parts;
+}

@@ -550,10 +550,17 @@ canvas.addEventListener('wheel', (e) => { if (!inXR) { preview.dist = THREE.Math
 
 // How tucked you are: the gap between your head and the board. Standing tall is ~1.5 m,
 // folded over the board is ~0.7 m, and that difference is worth real drag.
+// How tucked you are, from the gap between your head and the board.
+//
+// The range has to match THIS game's geometry. The board sits at hand height, so riding normally
+// already puts your head only about 0.75 m above it -- against the old 1.35 m reference that
+// pinned the reading at fully tucked and never moved, which meant the drag never changed and
+// there was nothing to gain by getting low. Standing tall with your hands down is about 0.95 m;
+// folded over the board is about 0.55.
 function tuckAmount() {
   if (!controls.pose.valid) return 0;
   const gap = controls.head.pos.y - controls.pose.center.y;
-  return THREE.MathUtils.clamp((1.35 - gap) / 0.55, 0, 1);
+  return THREE.MathUtils.clamp((1.00 - gap) / 0.35, 0, 1);
 }
 
 function hudState() {

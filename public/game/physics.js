@@ -26,10 +26,10 @@
 import * as THREE from 'three';
 
 export const SNOW = {
-  groomed: { mu: 0.045, grip: 1.00, label: 'Groomed' },
-  powder:  { mu: 0.070, grip: 0.80, label: 'Powder' },
-  ice:     { mu: 0.030, grip: 0.55, label: 'Icy' },
-  spring:  { mu: 0.080, grip: 0.92, label: 'Spring slush' },
+  groomed: { mu: 0.034, grip: 1.00, label: 'Groomed' },
+  powder:  { mu: 0.060, grip: 0.80, label: 'Powder' },
+  ice:     { mu: 0.024, grip: 0.55, label: 'Icy' },
+  spring:  { mu: 0.068, grip: 0.92, label: 'Spring slush' },
 };
 
 export const DEFAULT_TUNING = {
@@ -43,7 +43,11 @@ export const DEFAULT_TUNING = {
   boardWidth: 0.26,          // m, so an edged board touches on its edge, not its middle
   sidecutRadius: 8.0,        // m, a normal all-mountain board
 
-  cdA: 0.62, cdATuck: 0.40, rho: 1.2,
+  cdA: 0.62,                 // upright, which is what the terminal-speed figures are quoted for
+  cdATuck: 0.30,             // and folded over the board, which should be worth having
+  rho: 0.95,                 // air density on a MOUNTAIN. 1.2 is sea level, and a resort sits
+                             // 2000 m up where the air is a fifth thinner -- which is a fifth
+                             // less drag, and on a flat section drag is half of what stops you.
 
   contactEps: 0.05,          // m of clearance that still counts as touching...
   contactEpsGain: 0.008,     // ...which widens with speed, because a board doing 100 km/h is

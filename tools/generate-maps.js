@@ -560,12 +560,12 @@ function cornice() {
   pitchProfile(map, (z) => (
     z < 26 ? 7
       : z < 80 ? 7 + ((z - 26) / 54) * 21                     // roll into the face
-        : z < 210 ? 28                                        // steep: this is where the speed comes from
-          : z < 268 ? 28 - ((z - 210) / 58) * 12              // stand it up for the run-in
-            : z < 332 ? 16                                    // run-in stays FLAT past the lip crest
+        : z < 196 ? 28                                        // steep: this is where the speed comes from
+          : z < 258 ? 28 - ((z - 196) / 62) * 15              // stand it up for the run-in
+            : z < 332 ? 13                                    // run-in stays FLAT past the lip crest
               : z < 374 ? 34                                  // the gap opens under the arc
-                : z < 434 ? 41                                // landing, steepening to meet the arc
-                  : z < 488 ? 41 - ((z - 434) / 54) * 21      // knuckle out
+                : z < 482 ? 41                                // landing, long enough for a hot approach
+                  : z < 540 ? 41 - ((z - 482) / 58) * 21      // knuckle out
                     : z < 640 ? 20
                       : z < 760 ? 24
                         : z < 812 ? 16
@@ -573,15 +573,15 @@ function cornice() {
                             : 7), { smoothM: 8 });
 
   shapeValley(map, {
-    floorHalf: (z) => (z < 70 ? 34 : z < 250 ? 20 : z < 490 ? 46 : 32),
+    floorHalf: (z) => (z < 70 ? 34 : z < 250 ? 20 : z < 540 ? 46 : 32),
     wallH: 12, wallRun: 32, pow: 1.9, outerGrade: 0.26, centerFn: center,
   });
 
   // Rollers on the upper face only. The run-in is left deliberately smooth: a bump in the last
   // fifty metres is the difference between leaving the lip flat and leaving it sideways.
   addRollers(map, { z0: 100, z1: 200, wavelength: 44, amp: 1.4 });
-  addNoise(map, { amp: 0.65, scale: 0.02, oct: 4, seed: 5.1, mask: (x, z) => (z > 262 && z < 420 ? 0.15 : 1) });
-  addNoise(map, { amp: 0.22, scale: 0.07, oct: 2, seed: 2.4, mask: (x, z) => (z > 262 && z < 420 ? 0.2 : 1) });
+  addNoise(map, { amp: 0.65, scale: 0.02, oct: 4, seed: 5.1, mask: (x, z) => (z > 262 && z < 470 ? 0.15 : 1) });
+  addNoise(map, { amp: 0.22, scale: 0.07, oct: 2, seed: 2.4, mask: (x, z) => (z > 262 && z < 470 ? 0.2 : 1) });
 
   // The lip. Wide enough that you do not have to thread it, and shallow-angled for its size --
   // a big ramp at a modest angle is far more forgiving than a small one that flicks you.
@@ -591,31 +591,31 @@ function cornice() {
   kicker(map, 26, LIP - 3, { radius: 13, height: 2.2 });
 
   // Two smaller hits down the tail, for when you want the air without the commitment.
-  kicker(map, center(566), 566, { radius: 11, height: 2.1 });
+  kicker(map, center(600), 600, { radius: 11, height: 2.1 });
   kicker(map, center(690), 690, { radius: 12, height: 2.4 });
 
   // Smooth the LANDING, and never the lip. A couple of passes across a take-off rounds off the
   // very edge you are trying to leave from, and a rounded lip is a roll-over rather than a jump.
-  smoothAll(map, 2, (x, z) => (z > 344 && z < 476 ? 1 : 0));
+  smoothAll(map, 2, (x, z) => (z > 344 && z < 528 ? 1 : 0));
 
-  treeLine(map, rand, { side: -1, z0: 60, z1: 250, spacing: 10, inset: 20, insetVar: 10, cx: center });
-  treeLine(map, rand, { side: 1, z0: 60, z1: 250, spacing: 10, inset: 20, insetVar: 10, cx: center });
+  treeLine(map, rand, { side: -1, z0: 60, z1: 244, spacing: 10, inset: 20, insetVar: 10, cx: center });
+  treeLine(map, rand, { side: 1, z0: 60, z1: 244, spacing: 10, inset: 20, insetVar: 10, cx: center });
   // Nothing at all within the landing: it is the one place on the map you cannot choose your line.
-  glade(map, rand, { z0: 492, z1: 800, cx: center, halfWidth: 86, inner: 54, density: 0.005, minGap: 9, types: ['fir', 'pine'] });
-  for (const [rx, rz] of [[-62, 366], [64, 388], [-66, 412], [60, 440]]) place(map, 'rock', rx, rz, { s: 1.5 + rand() * 0.5, r: rand() * 3 });
+  glade(map, rand, { z0: 548, z1: 800, cx: center, halfWidth: 86, inner: 54, density: 0.005, minGap: 9, types: ['fir', 'pine'] });
+  for (const [rx, rz] of [[-64, 372], [66, 402], [-68, 430], [62, 462]]) place(map, 'rock', rx, rz, { s: 1.5 + rand() * 0.5, r: rand() * 3 });
 
   // Flag the lip so it is visible from the top of the run-in, and the knuckle so you know where
   // the landing stops being a landing.
   for (const x of [-30, -22, 22, 30]) place(map, 'flag', x, LIP - 16);
   place(map, 'sign', -34, LIP - 26, { r: Math.PI });
   place(map, 'sign', 34, LIP - 26, { r: Math.PI });
-  for (const x of [-38, 38]) for (let z = 434; z <= 470; z += 18) place(map, 'flag', x, z);
+  for (const x of [-40, 40]) for (let z = 400; z <= 520; z += 24) place(map, 'flag', x, z);
 
   gates(map, [
     ...slalomLine({ z0: 104, zEnd: 206, swing0: 11, swing1: 14, targetR: 62, cx: center, startSide: -1 }),
     [0, 268],                                                  // line up straight for the lip
-    [0, 456],                                                  // and through the landing
-    ...slalomLine({ z0: 524, zEnd: 756, swing0: 12, swing1: 15, targetR: 58, cx: center, startSide: 1 }),
+    [0, 508],                                                  // and through the landing
+    ...slalomLine({ z0: 570, zEnd: 756, swing0: 12, swing1: 15, targetR: 58, cx: center, startSide: 1 }),
   ]);
   finish(map, 852, 60);                      // the landing dumps you out wide, so the line is wide
   startArea(map, { z: 10, x: 0, width: 22 });

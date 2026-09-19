@@ -180,9 +180,14 @@ is the only thing that kicks you. Measured off it:
 
 | approach | air | height above the snow |
 |---|---|---|
-| 60 km/h | 2.8 s | 9 m |
-| 90 km/h | 3.6 s | 15 m |
-| 105 km/h | 4.2 s | 19 m |
+| 50 km/h | 2.9 s | 9 m |
+| 70 km/h | 3.8 s | 15 m |
+| 90 km/h | 5.0 s | 23 m |
+| 101 km/h | 5.6 s | 29 m |
+
+Straight-lining the whole run-in reaches the lip at about 101 km/h. The landing ramp runs 108 m
+at 41&deg;, which is long enough that even that arrives at 5.7 m/s of impact: soft, for a jump
+that put you 29 m in the air.
 
 The landing is the part that took the work. A take-off angle decides how long you are in the air,
 but the landing slope decides how hard you arrive: touch down on ground steeper than your flight

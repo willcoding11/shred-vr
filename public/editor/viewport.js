@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Terrain } from '../shared/terrain.js';
 import { PropRenderer, makeStartGate, makeFinishBanner, propGeometries } from '../shared/props.js';
+import { LiftRenderer } from '../shared/lifts.js';
 import { Scenery } from '../shared/scenery.js';
 import { heightAt, normalAt, slopeDegAt, bounds, PROP_TYPES, gridToWorld, lowestHeight } from '../shared/mapformat.js';
 
@@ -69,6 +70,7 @@ export class Viewport {
     if (!this.props) { this.props = new PropRenderer(map, { shadows: true }); this.scene.add(this.props.group); }
     else this.props.setMap(map);
     this.refreshMarkers();
+    this.refreshLifts();
     this.applyEnv();
     if (!keepCamera) this.frameStart();
     this.minimapDirty = true;
@@ -101,6 +103,32 @@ export class Viewport {
     this.controls.target.set(x, y, z);
     this.camera.position.copy(this.controls.target).addScaledVector(dir, dist);
     this.controls.update();
+  }
+
+  // The lifts, so you can see what you placed. Rebuilt wholesale on any change: a lift is two
+  // points and everything else about it is derived, so there is nothing to update in place.
+  refreshLifts() {
+    if (this.lifts) { this.scene.remove(this.lifts.group); this.lifts.dispose(); this.lifts = null; }
+    if (!this.map?.lifts?.length) return;
+    this.lifts = new LiftRenderer(this.map, { shadows: true });
+    this.scene.add(this.lifts.group);
+  }
+
+  // A dashed line from the base you clicked to wherever the cursor is, so placing the second end
+  // is not guesswork.
+  showLiftDraft(from, to) {
+    if (!this._draft) {
+      const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      this._draft = new THREE.Line(g, new THREE.LineDashedMaterial({ color: 0xf59e0b, dashSize: 6, gapSize: 4, depthTest: false }));
+      this._draft.renderOrder = 60; this._draft.frustumCulled = false;
+      this.scene.add(this._draft);
+    }
+    if (!from) { this._draft.visible = false; return; }
+    const a = new THREE.Vector3(from.x, heightAt(this.map, from.x, from.z) + 9, from.z);
+    const b = new THREE.Vector3(to.x, heightAt(this.map, to.x, to.z) + 9, to.z);
+    this._draft.geometry.setFromPoints([a, b]);
+    this._draft.computeLineDistances();
+    this._draft.visible = true;
   }
 
   refreshMarkers() {

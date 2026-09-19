@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Viewport } from './viewport.js';
 import { LiveClient } from '../shared/live.js';
+import { buildMountain, buildRun, PRESET_SIZES } from '../shared/mapgen.js';
 import {
   createMap, deserializeMap, serializeMap, applyBrush, extractRegion, unionRect, mapStats,
   PROP_TYPES, heightAt, normalAt, slopeDegAt, bounds, fbm, gridToWorld,
@@ -25,6 +26,7 @@ const TOOLS = {
   select:  { label: 'Select',       key: 'R', kind: 'select',  color: 0xfacc15, hint: 'Click an object to select; drag to move; Delete removes' },
   start:   { label: 'Start',        key: 'F', kind: 'marker',  color: 0x22c55e, hint: 'Click to move the start gate' },
   finish:  { label: 'Finish',       key: 'G', kind: 'marker',  color: 0xef4444, hint: 'Click to move the finish line' },
+  lift:    { label: 'Lift',         key: 'L', kind: 'marker',  color: 0xf59e0b, hint: 'Click the BASE, then click the TOP. Click an existing base again to remove it' },
 };
 
 const state = {
@@ -32,11 +34,16 @@ const state = {
   brush: { radius: 12, strength: 0.5, falloff: 0.5, height: 1.8, side: 1 },
   prop: { type: 'pine', scale: 1, randomScale: 0.35, randomRot: true, rot: 0, density: 0.5, gap: 6 },
   selected: -1, dirty: false, saving: false, follow: true, followRider: false,
+  liftFrom: null,
   undo: [], redo: [],
   stroke: null,
 };
 
 const view = new Viewport($('view'), $('minimap'));
+function showHint(t) { $('hint').textContent = t; }
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.liftFrom) { state.liftFrom = null; view.showLiftDraft(null); showHint(TOOLS.lift.hint); }
+});
 const live = new LiveClient('editor');
 let counts = { game: 0, editor: 0 };
 
@@ -195,7 +202,12 @@ function terrainEntry(beforeHeights, rect) {
   }
   return { type: 'terrain', rect, before, after };
 }
-function snapshotProps() { return { props: structuredClone(state.map.props), start: { ...state.map.start }, finish: { ...state.map.finish } }; }
+// The whole non-terrain state: props, the start and finish markers, and the lifts. Undo restores
+// this wholesale, so anything left out of it is silently not undoable.
+function snapshotProps() {
+  const m = state.map;
+  return { props: structuredClone(m.props), start: { ...m.start }, finish: { ...m.finish }, lifts: structuredClone(m.lifts || []) };
+}
 function snapshotMeta() { const m = state.map; return { env: { ...m.env }, name: m.name, description: m.description, difficulty: m.difficulty, order: m.order }; }
 function applyMeta(s) {
   const m = state.map;
@@ -225,7 +237,8 @@ function applyUndo(entry, dir) {
   } else {
     const s = dir === 'undo' ? entry.before : entry.after;
     m.props = structuredClone(s.props); m.start = { ...s.start }; m.finish = { ...s.finish };
-    view.props.sync(); view.refreshMarkers(); state.selected = -1; view.showSelection(null);
+    m.lifts = structuredClone(s.lifts || []);
+    view.props.sync(); view.refreshMarkers(); view.refreshLifts(); state.selected = -1; view.showSelection(null);
     markDirty({ props: true });
   }
 }
@@ -240,6 +253,7 @@ function setTool(name) {
   $$('.tool[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === name));
   const t = TOOLS[name];
   $('hint').textContent = t.hint;
+  if (t !== TOOLS.lift) { state.liftFrom = null; view.showLiftDraft(null); }
   document.body.dataset.toolKind = t.kind;
   if (t.kind !== 'select') { state.selected = -1; view.showSelection(null); }
   $('secBrush').classList.toggle('hidden', !(t.kind === 'terrain' || t.kind === 'stamp' || name === 'scatter' || name === 'eraseProps'));
@@ -295,11 +309,40 @@ canvas.addEventListener('pointerdown', (e) => {
   } else if (state.tool === 'start') {
     const before = snapshotProps();
     m.start = { x: +hit.x.toFixed(2), z: +hit.z.toFixed(2), yaw: downhillYaw(hit.x, hit.z) };
-    view.refreshMarkers(); fillMarkers(); pushUndo({ type: 'props', before, after: snapshotProps() }); markDirty({ props: true });
+    view.refreshMarkers(); view.refreshLifts(); fillMarkers(); pushUndo({ type: 'props', before, after: snapshotProps() }); markDirty({ props: true });
   } else if (state.tool === 'finish') {
     const before = snapshotProps();
     m.finish = { ...m.finish, x: +hit.x.toFixed(2), z: +hit.z.toFixed(2) };
-    view.refreshMarkers(); fillMarkers(); pushUndo({ type: 'props', before, after: snapshotProps() }); markDirty({ props: true });
+    view.refreshMarkers(); view.refreshLifts(); fillMarkers(); pushUndo({ type: 'props', before, after: snapshotProps() }); markDirty({ props: true });
+  } else if (state.tool === 'lift') {
+    m.lifts ||= [];
+    // Click an existing base to remove that lift, so one tool both places and deletes.
+    const near = m.lifts.findIndex((l) => Math.hypot(l.base.x - hit.x, l.base.z - hit.z) < 22);
+    if (near >= 0 && !state.liftFrom) {
+      const before = snapshotProps();
+      const gone = m.lifts.splice(near, 1)[0];
+      view.refreshLifts(); pushUndo({ type: 'props', before, after: snapshotProps() }); markDirty({ props: true });
+      toast(`Removed "${gone.name}"`);
+      return;
+    }
+    if (!state.liftFrom) {
+      state.liftFrom = { x: +hit.x.toFixed(2), z: +hit.z.toFixed(2) };
+      view.showLiftDraft(state.liftFrom, state.liftFrom);
+      showHint('Now click the TOP station. Esc cancels.');
+      return;
+    }
+    const base = state.liftFrom, top = { x: +hit.x.toFixed(2), z: +hit.z.toFixed(2) };
+    state.liftFrom = null; view.showLiftDraft(null);
+    if (Math.hypot(top.x - base.x, top.z - base.z) < 60) { toast('Too short for a lift', true); showHint(TOOLS.lift.hint); return; }
+    // whichever end is lower is the bottom, because nobody rides a lift downhill
+    const lowFirst = heightAt(m, base.x, base.z) <= heightAt(m, top.x, top.z);
+    const before = snapshotProps();
+    const n = m.lifts.length + 1;
+    m.lifts.push({ id: 'lift' + n, name: n === 1 ? 'Summit Express' : `Chair ${n}`,
+      base: lowFirst ? base : top, top: lowFirst ? top : base });
+    view.refreshLifts(); pushUndo({ type: 'props', before, after: snapshotProps() }); markDirty({ props: true });
+    showHint(TOOLS.lift.hint);
+    toast('Lift placed');
   }
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -576,34 +619,40 @@ const PRESETS = {
   park:  { slope: 12, length: 500, width: 160, roughness: 0.1, valley: 0.5, difficulty: 'blue' },
   flat:  { slope: 8, length: 400, width: 200, roughness: 0, valley: 0, difficulty: 'green' },
 };
-$('newPreset').addEventListener('change', (e) => {
-  const p = PRESETS[e.target.value]; if (!p) return;
-  $('newSlope').value = p.slope; $('newLength').value = p.length; $('newWidth').value = p.width; $('newRough').value = p.roughness; $('newValley').value = p.valley; $('newDifficulty').value = p.difficulty;
-});
+
+// What KIND of map, then how big. Everything else is fine tuning, and a mountain and a run are
+// different enough shapes that picking between them with a slope number never worked.
+function newKind() { return document.querySelector('input[name="newKind"]:checked')?.value || 'mountain'; }
+function syncNewSize() {
+  const k = newKind(), size = $('newSize').value, p = PRESET_SIZES[k][size];
+  $('newLength').value = p.lengthM; $('newWidth').value = p.widthM; $('newSpacing').value = String(p.spacing);
+  const cells = Math.round(p.widthM / p.spacing + 1) * Math.round(p.lengthM / p.spacing + 1);
+  $('newSizeNote').textContent = k === 'mountain'
+    ? `${p.lengthM} x ${p.widthM} m of open hill, ${p.spacing} m grid (${(cells / 1000).toFixed(0)}k cells). Drains to one base area, comes with a chairlift.`
+    : `${p.lengthM} m long, ${p.widthM} m wide, ${p.spacing} m grid (${(cells / 1000).toFixed(0)}k cells). Start at the top, finish at the bottom.`;
+  $('newValley').closest('label').style.display = k === 'mountain' ? 'none' : '';
+  $('newSlope').closest('label').style.display = k === 'mountain' ? 'none' : '';
+}
+for (const el of document.querySelectorAll('input[name="newKind"]')) el.addEventListener('change', syncNewSize);
+$('newSize').addEventListener('change', syncNewSize);
+syncNewSize();
+
 $('newLevelForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = $('newName').value.trim() || 'Untitled run';
+  const name = $('newName').value.trim() || 'Untitled';
+  const kind = newKind();
   const spacing = Number($('newSpacing').value);
-  const w = Math.max(24, Math.round(Number($('newWidth').value) / spacing) + 1), h = Math.max(40, Math.round(Number($('newLength').value) / spacing) + 1);
+  const w = Math.max(24, Math.round(Number($('newWidth').value) / spacing) + 1);
+  const h = Math.max(40, Math.round(Number($('newLength').value) / spacing) + 1);
   const map = createMap({ id: uniqueId(slug(name)), name, w, h, spacing, slopeDeg: Number($('newSlope').value), difficulty: $('newDifficulty').value });
-  const rough = Number($('newRough').value), valley = Number($('newValley').value), seed = Math.random() * 100;
-  const halfW = ((w - 1) * spacing) / 2;
-  for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
-    const [wx, wz] = gridToWorld(map, x, z);
-    let dy = 0;
-    if (rough > 0) dy += fbm(wx * 0.02 + seed, wz * 0.02 + seed * 2, 3) * rough * 1.2 + fbm(wx * 0.08 + seed, wz * 0.08, 2) * rough * 0.3;
-    if (valley > 0) { const u = Math.abs(wx) / halfW, t = Math.max(0, (u - 0.6) / 0.4); dy += Math.pow(t, 2.4) * 10 * valley; }
-    // gentle start pad and run-out
-    if (wz < 24) dy += (24 - wz) / 24 * Math.tan((map.base.slopeDeg * Math.PI) / 180) * (24 - wz) * 0.5;
-    map.heights[z * w + x] += dy;
-  }
-  const zEnd = (h - 1) * spacing;
-  for (let z = 0; z < h; z++) { const wz = z * spacing; if (wz > zEnd - 60) { const t = (wz - (zEnd - 60)) / 60; for (let x = 0; x < w; x++) map.heights[z * w + x] += t * t * 6; } }
-  map.start = { x: 0, z: 12, yaw: 0 }; map.finish = { x: 0, z: zEnd - 50, w: 36 };
+  const rough = Number($('newRough').value);
+  if (kind === 'mountain') buildMountain(map, { rough: Math.max(0.2, rough * 3) });
+  else buildRun(map, { slopeDeg: Number($('newSlope').value), rough, valley: Number($('newValley').value) });
   map.order = (state.maps.at(-1)?.order ?? 99) + 1;
   const res = await fetch('/api/maps', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(serializeMap(map)) });
   if (!res.ok) { toast('Could not create map', true); return; }
-  $('newLevel').close(); await refreshMaps(); openMap(map.id); setTool('raise'); toast(`Created "${name}"`);
+  $('newLevel').close(); await refreshMaps(); openMap(map.id); setTool('raise');
+  toast(`Created "${name}"`);
 });
 function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'map'; }
 function uniqueId(base) { let id = base, i = 2; while (state.maps.some((m) => m.id === id)) id = `${base}-${i++}`; return id; }

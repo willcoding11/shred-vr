@@ -37,6 +37,10 @@ export class LiveClient {
       this._bye = () => { this.closing = true; try { this.ws?.close(); } catch {} };
       addEventListener('pagehide', this._bye);
       addEventListener('beforeunload', this._bye);
+      // pagehide also fires when a page goes into the back/forward cache, and that page can come
+      // back. Without this it would come back with `closing` still set and never reconnect --
+      // live sync would be silently dead until you reloaded by hand.
+      addEventListener('pageshow', () => { if (this.closing) { this.closing = false; this.connect(); } });
     }
   }
   on(type, fn) { (this.handlers[type] ||= []).push(fn); return this; }

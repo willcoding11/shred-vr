@@ -166,7 +166,15 @@ function sendProps() {
   propsTimer = setTimeout(() => {
     propsTimer = null;
     if (!state.map || state.map.id !== id) return;
-    live.send({ type: 'props', id, props: state.map.props, start: state.map.start, finish: state.map.finish });
+    // EVERYTHING that is not heights. This used to carry props, start and finish only, so a
+    // chairlift you placed never reached the game at all -- the only way to see it was to close
+    // the game, reload the tab and open it again, which is exactly what live sync exists to avoid.
+    // Cheap enough to send whole: a map with two lifts and two thousand props is a few tens of kB.
+    live.send({ type: 'props', id, props: state.map.props,
+      start: state.map.start, finish: state.map.finish,
+      lifts: state.map.lifts || [], ice: state.map.ice || null, tarn: state.map.tarn || null,
+      dropIns: state.map.dropIns || null, freeride: !!state.map.freeride,
+      name: state.map.name, difficulty: state.map.difficulty });
   }, state.map && state.map.props.length > 200 ? 240 : 80);
 }
 let patchRect = null, patchTimer = null;
@@ -178,9 +186,21 @@ function queuePatch(rect) {
 // as JSON that is megabytes a second over Wi-Fi to the headset. Split anything large into
 // tiles and round to the centimetre.
 const PATCH_MAX_CELLS = 4096;
+// Terrain edits move the ground that other things stand on. Rather than rebuild those on every
+// brush dab, they settle once the stroke stops.
+let settleTimer = null;
+function settleAfterTerrain() {
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => {
+    if (!state.map) return;
+    view.refreshLifts();                 // towers are grown from the ground under them
+    view.terrain?.setSun(view.scenery.sunDir);
+  }, 500);
+}
 function flushPatch() {
   patchTimer = null;
   if (!patchRect || !state.map) return;
+  settleAfterTerrain();
   const id = state.map.id;
   const send = (r) => live.send({
     type: 'patch', id, rect: r,

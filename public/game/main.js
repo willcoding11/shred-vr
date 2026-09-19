@@ -68,7 +68,7 @@ let lifts = null, liftRide = null, liftDwell = 0;
 let phase = 'idle';                 // idle (not in VR) | riding | finished
 let runTime = 0, timerOn = false, checkpoint = null, best = null;
 let flash = 0;
-let inXR = false, mapsList = [], telemetryT = 0, propSyncT = 0;
+let inXR = false, mapsList = [], telemetryT = 0, propSyncT = 0, settleT = 0;
 let prevX = 0, prevZ = 0;
 let pointers = [];
 
@@ -115,6 +115,30 @@ function applyMap(m, keepPosition = false) {
   best = Number(localStorage.getItem('shred.best.' + map.id)) || null;
   fillMapSelect();
   if (!inXR) framePreview();
+}
+
+// Rebuild the lift hardware in place. The rider may be sitting on a chair that is about to stop
+// existing, so put them back on the snow first rather than leave them attached to nothing.
+function rebuildLifts() {
+  // Unload properly rather than just dropping the phase: unloadLift() puts you on the snow at the
+  // top of the line you were on, which is where you were going anyway.
+  if (phase === 'lift' && liftRide) unloadLift();
+  if (lifts) { scene.remove(lifts.group); lifts.dispose(); }
+  lifts = new LiftRenderer(map, { shadows: settings.shadows });
+  scene.add(lifts.group);
+}
+
+// Everything that depends on the SHAPE of the ground rather than on one patch of it: the baked
+// sun shadowing, the height of the valley floor, and the towers the lifts stand on. Doing this per
+// brush dab would cost a re-bake of the whole heightfield every few milliseconds, so it settles
+// once the stroke stops instead.
+function settleTerrain() {
+  if (!map || !terrain) return;
+  terrain.bakeLight();
+  terrain.recolor();
+  scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
+  if (map.lifts && map.lifts.length) rebuildLifts();
+  rebuildSpatial();
 }
 
 function rebuildMarkers() {
@@ -246,12 +270,28 @@ live.on('patch', (msg) => {
   if (!map || msg.id !== map.id) return;
   applyRegion(map, msg.rect, msg.heights);
   terrain.updateRegion(msg.rect);
-  propSyncT = 0.25; flashLive();
+  propSyncT = 0.25; settleT = 0.6; flashLive();
 });
 live.on('props', (msg) => {
   if (!map || msg.id !== map.id) return;
   map.props = msg.props; if (msg.start) map.start = msg.start; if (msg.finish) map.finish = msg.finish;
-  props.sync(); rebuildMarkers(); rebuildSpatial(); flashLive();
+  if (msg.name) map.name = msg.name;
+  if (msg.difficulty) map.difficulty = msg.difficulty;
+  if (msg.freeride !== undefined) map.freeride = msg.freeride;
+  if (msg.dropIns !== undefined) map.dropIns = msg.dropIns;
+  // Ice is a terrain COLOUR, so changing it has to repaint the hill rather than the props.
+  const iceBefore = JSON.stringify(map.ice ?? null);
+  if (msg.ice !== undefined) map.ice = msg.ice;
+  if (msg.tarn !== undefined) map.tarn = msg.tarn;
+  // Lifts are hardware: rebuilding them is a new set of towers, cable and chairs, so only do it
+  // when they have actually changed.
+  if (msg.lifts !== undefined && JSON.stringify(msg.lifts) !== JSON.stringify(map.lifts || [])) {
+    map.lifts = msg.lifts;
+    rebuildLifts();
+  }
+  props.sync(); rebuildMarkers(); rebuildSpatial();
+  if (JSON.stringify(map.ice ?? null) !== iceBefore) terrain.recolor();
+  flashLive();
 });
 live.on('env', (msg) => {
   if (!map || msg.id !== map.id) return;
@@ -444,6 +484,7 @@ renderer.setAnimationLoop(() => {
   spray.update(dt);
   flash = Math.max(0, flash - dt * 1.5);
   if (propSyncT > 0) { propSyncT -= dt; if (propSyncT <= 0) { props.sync(); rebuildMarkers(); } }
+  if (settleT > 0) { settleT -= dt; if (settleT <= 0) settleTerrain(); }
 
 
   // the snow shader needs to know where the sun is, or its sparkle and its blue shadows point
@@ -626,7 +667,7 @@ window.shredCam = (o = {}) => { Object.assign(preview, o); if (o.at === null) pr
 // Everything a review needs to check a claim instead of squinting at a screenshot. Reviewing the
 // Real preset from pictures alone kept producing confident statements about which mesh or which
 // shadow map was in use that turned out to be wrong in both directions.
-window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings });
+window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings, live, map });
 
 // A repeatable cost measurement, because "it looks smooth on a desktop GPU" is not a number and a
 // headset has about eleven milliseconds for two eyes. Walks a fixed set of viewpoints, lets the
@@ -680,6 +721,7 @@ window.shredDebug = () => ({
   mountainsPinned: scenery.mountains?.userData.pinned,
   // what the last frame actually cost
   draws: renderer.info.render.calls, tris: renderer.info.render.triangles,
+  settleT: +settleT.toFixed(3), propSyncT: +propSyncT.toFixed(3),
   chunks: terrain ? (() => {
     let vis = 0; const lod = [0, 0, 0, 0];
     for (const c of terrain.chunks) if (c.mesh.visible) { vis++; lod[c.lod]++; }

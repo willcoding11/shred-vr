@@ -261,6 +261,15 @@ export function unionRect(a, b) {
 }
 
 // Stats used by the editor's info panel and the map critic.
+// Lowest point on the map. The distant valley floor has to sit under this, or it cuts through
+// the hill and hides everything below it.
+export function lowestHeight(map) {
+  const H = map.heights;
+  let lo = Infinity;
+  for (let i = 0; i < H.length; i++) if (H[i] < lo) lo = H[i];
+  return Number.isFinite(lo) ? lo : 0;
+}
+
 export function mapStats(map) {
   const { w, h } = map.size, sp = map.spacing;
   let steep = 0, flat = 0, n = 0, maxSlope = 0;

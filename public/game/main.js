@@ -8,14 +8,14 @@ import { Terrain } from '../shared/terrain.js';
 import { PropRenderer, makeStartGate, makeFinishBanner } from '../shared/props.js';
 import { Scenery } from '../shared/scenery.js';
 import { LiveClient } from '../shared/live.js';
-import { deserializeMap, applyRegion, PROP_TYPES, bounds } from '../shared/mapformat.js';
+import { deserializeMap, applyRegion, PROP_TYPES, bounds, lowestHeight } from '../shared/mapformat.js';
 import { Rider, SNOW } from './physics.js';
 import { BoardControls } from './controls.js';
 import { Hud, VrMenu, Vignette, fmtTime } from './hud.js';
 import { GameAudio } from './audio.js';
 
 const DEFAULTS = {
-  regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13,
+  regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1,
   rollGain: 1.0, smoothing: 0.06, sound: true, pixelRatio: 1, boardLength: 1.5, slowMoScale: 0.35,
 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('shred.settings') || '{}') };
@@ -90,12 +90,13 @@ async function loadMapById(id, { keepPosition = false } = {}) {
 function applyMap(m, keepPosition = false) {
   const same = map && map.id === m.id;
   map = m;
-  if (!terrain) { terrain = new Terrain(map, { shadows: settings.shadows }); scene.add(terrain.mesh); }
+  if (!terrain) { terrain = new Terrain(map, { shadows: settings.shadows, relief: settings.relief }); scene.add(terrain.mesh); }
   else terrain.setMap(map);
   if (!props) { props = new PropRenderer(map, { shadows: settings.shadows }); scene.add(props.group); }
   else props.setMap(map);
   rebuildMarkers(); rebuildSpatial();
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
+  scenery.setGround(lowestHeight(map));
   if (!rider) rider = new Rider(terrain, { boardLength: settings.boardLength });
   rider.terrain = terrain;
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
@@ -226,6 +227,7 @@ live.on('env', (msg) => {
   if (!map || msg.id !== map.id) return;
   map.env = { ...map.env, ...msg.env };
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
+  scenery.setGround(lowestHeight(map));
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
   terrain.recolor(); flashLive();
 });
@@ -260,6 +262,7 @@ bindSetting('setSnowfall', 'snowfall', (v) => v === 'on', (v) => (v ? 'on' : 'of
 bindSetting('setSound', 'sound', (v) => v === 'on', (v) => (v ? 'on' : 'off'), () => { audio.enabled = settings.sound; if (audio.master) audio.master.gain.value = settings.sound ? 0.8 : 0; });
 bindSetting('setSlowMo', 'slowMoScale', Number, String);
 bindSetting('setLegs', 'legRate', Number, String);
+bindSetting('setRelief', 'relief', Number, String, () => { if (terrain) { terrain.relief = settings.relief; terrain.recolor(); } });
 bindSetting('setPixel', 'pixelRatio', Number, String, applyRenderScale);
 function applyRenderScale() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * settings.pixelRatio);

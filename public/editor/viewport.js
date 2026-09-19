@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Terrain } from '../shared/terrain.js';
 import { PropRenderer, makeStartGate, makeFinishBanner, propGeometries } from '../shared/props.js';
 import { Scenery } from '../shared/scenery.js';
-import { heightAt, normalAt, slopeDegAt, bounds, PROP_TYPES, gridToWorld } from '../shared/mapformat.js';
+import { heightAt, normalAt, slopeDegAt, bounds, PROP_TYPES, gridToWorld, lowestHeight } from '../shared/mapformat.js';
 
 // Slab test against the map's bounding box, so a ray that misses the terrain costs nothing.
 function raySlab(o, d, b, [y0, y1]) {
@@ -77,6 +77,7 @@ export class Viewport {
     if (!this.map) return;
     const e = this.map.env;
     this.scenery.setEnv(this.previewEnv ? e : { timeOfDay: 0.4, fog: 0, snowfall: 0, wind: 0 });
+    if (this.map) this.scenery.setGround(lowestHeight(this.map));
   }
   setColorMode(mode) { if (this.terrain) { this.terrain.colorMode = mode; this.terrain.recolor(); } }
 

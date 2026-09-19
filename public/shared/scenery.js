@@ -27,12 +27,14 @@ export class Scenery {
       this.sun.shadow.mapSize.set(shadowSize, shadowSize);
       const c = this.sun.shadow.camera;
       // a tighter frustum around the rider: ~7 cm/texel at 2048 instead of ~10 cm
-      c.left = -75; c.right = 75; c.top = 75; c.bottom = -75; c.near = 1; c.far = 420;
+      // Wider than the rider needs, because a 25 degree sun throws shadows two to three times
+      // the height of whatever casts them, and the hill is now casting its own.
+      c.left = -110; c.right = 110; c.top = 110; c.bottom = -110; c.near = 1; c.far = 600;
       this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.6;
     }
     this.sunTarget = new THREE.Object3D();
     scene.add(this.sun, this.sunTarget); this.sun.target = this.sunTarget;
-    this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0xcfd8e3, 0.6);
+    this.hemi = new THREE.HemisphereLight(0x9ec4ff, 0xb9c6d6, 0.38);
     scene.add(this.hemi);
 
     this.skyUniforms = {
@@ -53,17 +55,32 @@ export class Scenery {
     this.setEnv({ timeOfDay: 0.35, fog: 0.35, snowfall: 0.2 });
   }
 
+  // Drop the distant valley floor below the map. It is a 2.6 km disc that fills the gap between
+  // the terrain edge and the mountains, it rides along with the camera, and it used to sit at a
+  // fixed world height of -98 m. The runs descend 116 to 365 m, so on two of the three maps it
+  // sliced straight through the hill: stand at the top, and a hard white plane cut off everything
+  // below it. It has to live under the lowest point of whatever map is loaded.
+  setGround(lowestY) {
+    if (!this.mountains) return;
+    const floor = this.mountains.userData.floor;
+    if (floor) floor.position.y = lowestY - 12 - this.mountains.userData.baseY;
+  }
+
   setEnv(env) {
     this.env = { ...this.env, ...env };
     const t = this.env.timeOfDay ?? 0.35;               // 0 = dawn, 0.5 = noon, 1 = dusk
-    const elev = Math.sin(t * Math.PI) * 1.05 + 0.08;   // radians-ish
+    // A WINTER sun: low. The old curve put it 58 degrees up at midday, which is a July noon --
+    // it lights every face equally, no roller casts a shadow, and the hill reads as a flat white
+    // sheet. At a ski latitude the winter sun peaks around 20-25 degrees, and that raking light
+    // is the single biggest thing that makes snow legible.
+    const elev = Math.sin(t * Math.PI) * 0.50 + 0.07;   // radians: ~28 deg at midday, 4 at dawn
     const az = (t - 0.5) * Math.PI * 1.2 + 0.4;
     const dir = new THREE.Vector3(Math.cos(elev) * Math.sin(az), Math.sin(elev), Math.cos(elev) * Math.cos(az)).normalize();
     this.sunDir = dir;
     this.sun.position.copy(dir).multiplyScalar(220);
-    const warm = 1 - Math.min(1, Math.sin(t * Math.PI) * 1.4);   // low sun -> warm
+    const warm = 1 - Math.min(1, Math.sin(t * Math.PI) * 1.05);  // low sun -> warm
     this.sun.color.setRGB(1, 0.98 - warm * 0.25, 0.94 - warm * 0.5);
-    this.sun.intensity = 2.4 + Math.sin(t * Math.PI) * 1.3;
+    this.sun.intensity = 2.5 + Math.sin(t * Math.PI) * 1.5;
     this.skyUniforms.sunDir.value.copy(dir);
     const zen = new THREE.Color().setHSL(0.6, 0.62, 0.42 + Math.sin(t * Math.PI) * 0.16);
     const hor = new THREE.Color().lerpColors(new THREE.Color(0xffc9a3), new THREE.Color(0xe3eef9), Math.min(1, Math.sin(t * Math.PI) * 1.6));
@@ -116,7 +133,9 @@ function makeMountains() {
   m.userData.baseY = -40; m.frustumCulled = false; m.name = 'mountains';
   const floor = new THREE.Mesh(new THREE.CircleGeometry(1300, 48), new THREE.MeshStandardMaterial({ color: 0xe9f0f8, roughness: 1 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = -58; floor.receiveShadow = false;
+  floor.name = 'valleyFloor';
   m.add(floor);
+  m.userData.floor = floor;
   return m;
 }
 

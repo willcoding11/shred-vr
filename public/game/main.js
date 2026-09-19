@@ -369,7 +369,7 @@ function menuAction(id) {
 // ---------------- loop ----------------
 const clock = new THREE.Clock();
 const FIXED = 1 / 120;
-let acc = 0, calibrated = false, sawHands = 0, slowMo = 1, legY = null, bootSag = 0;
+let acc = 0, calibrated = false, sawHands = 0, slowMo = 1, legY = null, legVy = 0, bootSag = 0;
 let lastGateTap = 0;
 const BOOT_AXIS = new THREE.Vector3(0, 0, 1);
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), _basis = new THREE.Matrix4();
@@ -474,11 +474,17 @@ function stepVR(dtReal, now) {
   // real map that is 40 cm of lag clamped to the limit, which is a permanent offset that filters
   // nothing at all. Carrying the current vertical velocity forward first makes the lag zero for
   // any steady descent, so what is left to filter is exactly the bumps.
-  if (legY === null) legY = rider.pos.y;
-  legY += rider.vel.y * dtReal;
+  // Carrying the descent forward has to use a SMOOTHED vertical velocity. The raw one jumps
+  // every time the contact resolves, so feeding it in unfiltered pipes exactly the noise this
+  // is meant to remove straight into the view -- and the faster you go, the more of it there is.
+  if (legY === null) { legY = rider.pos.y; legVy = rider.vel.y; }
+  legVy += (rider.vel.y - legVy) * Math.min(1, dtReal * 7);
+  legY += legVy * dtReal;
   const rate = rider.grounded && !rider.standing ? settings.legRate : 30;
   legY += (rider.pos.y - legY) * Math.min(1, dtReal * rate);
-  const sag = THREE.MathUtils.clamp(rider.pos.y - legY, -0.09, 0.09);
+  // The suspension needs more travel the faster you go, for the same reason your knees do.
+  const travel = 0.09 + Math.min(0.10, rider.speed * 0.005);
+  const sag = THREE.MathUtils.clamp(rider.pos.y - legY, -travel, travel);
   legY = rider.pos.y - sag;
   rig.position.y = rider.pos.y - sag;
   bootSag = sag;

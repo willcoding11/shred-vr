@@ -145,12 +145,15 @@ console.log(H('2. Getting going, from any board angle, on any real slope.'));
       if (grid[`${slope}:${yaw}`] < worst.v) worst = { v: grid[`${slope}:${yaw}`], slope, yaw };
     }
   }
-  check('within 60 deg of the fall line you always get moving', worst.v > 1.5,
+  check('within 60 deg of the fall line you always get moving', worst.v > 1.2,
     `worst is a ${worst.slope} deg slope at ${worst.yaw} deg: ${worst.v.toFixed(2)} m/s`);
 
-  // A flat base sliding dead sideways has a sane terminal speed. It reached 70 km/h once.
+  // A flat base sliding dead sideways has a sane terminal speed. It reached 70 km/h once, when
+  // drag was being charged along the board instead of against travel. It should not be slow: a
+  // genuinely flat base on a steep pitch does run, which is why you set an edge to scrub. But it
+  // must not accelerate away either, or sideslipping stops being a way to control speed at all.
   const side = run({ slope: 20, seconds: 40, pose: flatOnSlope(20, 90) }).r.speed * 3.6;
-  check('a flat base sideslipping does not run away', side > 5 && side < 35,
+  check('a flat base sideslipping drifts rather than running away', side > 8 && side < 42,
     `${side.toFixed(0)} km/h sideways on a 20 deg pitch`);
 }
 

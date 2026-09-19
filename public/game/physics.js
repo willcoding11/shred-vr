@@ -34,22 +34,29 @@ export const SNOW = {
 
 export const DEFAULT_TUNING = {
   mass: 78,                  // kg, rider plus kit
-  gravity: 9.81,
+  gravity: 8.80,             // Deliberately under 9.81. Everything here is scaled by it -- the
+                             // drive down the hill, the load on the board, the grip that load
+                             // buys -- so lowering it does not break the balance, it just makes
+                             // the whole thing a little less heavy and buys about 11% more hang
+                             // time off every jump. Terminal speeds drop ~5% and stay in range.
   boardLength: 1.5,          // m, nose to tail
   boardWidth: 0.26,          // m, so an edged board touches on its edge, not its middle
   sidecutRadius: 8.0,        // m, a normal all-mountain board
 
   cdA: 0.62, cdATuck: 0.40, rho: 1.2,
 
-  contactEps: 0.05,          // m of clearance that still counts as touching
+  contactEps: 0.05,          // m of clearance that still counts as touching...
+  contactEpsGain: 0.008,     // ...which widens with speed, because a board doing 100 km/h is
+  contactEpsMax: 0.20,       // planing across small gaps rather than leaving the snow at each one
   maxEdgeDeg: 65,            // past this the edge is not a usable angle any more
   edgeDeadzoneDeg: 2,
 
   slipPeakDeg: 5.5,          // slip angle where the edge is giving most of its grip
   muLatFlat: 0.08,           // a flat base still scrubs sideways, but far too little to hold a hill
   muLatMax: 1.20,            // hard ceiling: snow shears before an edge holds more than this
-  muSkidExtra: 0.70,         // extra drag from a board ploughing sideways, as sin^2 of the slip
-  ploughRef: 5.0,            // m/s at which ploughing drag reaches full strength
+  muSkidExtra: 0.45,         // extra drag from a board ploughing sideways, as sin^2 of the slip
+  ploughRef: 5.0,            // m/s that ploughing drag is quoted against; it grows as v^2 from there
+  ploughMax: 4.0,            // and stops growing here, so a fast board is redirected, not deleted
   maxLoadG: 2.2,             // cap on how much a carve may load the board (expert carves peak near 2g)
   maxLatG: 2.6,                // and a hard ceiling on the lateral acceleration itself
   railHoldDeg: 6,            // slip angle up to which the board is still running in its own groove
@@ -65,6 +72,8 @@ export const DEFAULT_TUNING = {
   flexPop: 1.5,              // m/s of rebound available from a fully loaded board
 
   bridge: 0.035,             // m, how much snow and board stiffness smooth out a sharp ridge
+  bridgeGain: 0.007,         // ...and how much more of that a board planing at speed does
+  bridgeMax: 0.18,
   bodyMin: 0.50,             // m, how close your head may get to the snow before your legs stop you.
                              // This has to be well under 0.75: the board sits at hand height, so
                              // riding normally already puts your head only ~0.75 m above the snow.
@@ -76,6 +85,7 @@ export const DEFAULT_TUNING = {
 const _a = new THREE.Vector3(), _c = new THREE.Vector3();
 const _vb = new THREE.Vector3(), _vc = new THREE.Vector3(), _tan = new THREE.Vector3();
 const _side = new THREE.Vector3(), _head = new THREE.Vector3();
+const _nrm = [0, 1, 0];
 const clamp = THREE.MathUtils.clamp, smooth = THREE.MathUtils.smoothstep;
 const DEG = THREE.MathUtils.degToRad, RAD = THREE.MathUtils.radToDeg;
 
@@ -155,10 +165,11 @@ export class Rider {
     const c = this.sampleContact();
     this.noseGap = c.noseGap; this.tailGap = c.tailGap; this.contactGap = c.gap;
     const wasGrounded = this.grounded;
+    const eps = this.contactEps();
     // `touching` decides whether the snow acts on you this step. `this.grounded` is what the
     // HUD, audio and spray read, and it is owned by resolveContact/constrainBody at the end of
     // the step so it can never disagree with the forces that were actually applied.
-    const touching = c.gap <= t.contactEps;
+    const touching = c.gap <= eps;
 
     if (touching) this.contactForces(dt, c, vb);
     else {
@@ -178,8 +189,16 @@ export class Rider {
   contactForces(dt, c, vb) {
     const t = this.t, T = this.terrain, v = this.vel, g = t.gravity;
 
-    const nArr = T.normalAt(c.x, c.z);
-    const n = this.normal.set(nArr[0], nArr[1], nArr[2]).normalize();
+    // Average the snow's normal along the board rather than reading it off one point. A single
+    // sample steps every time the contact crosses a grid line, and every force in this function
+    // is built on that vector, so the step goes into all of them at once.
+    const reach = Math.min(t.boardLength * 0.5, 0.4 + this.speed * 0.03);
+    const n = this.normal.set(0, 0, 0);
+    for (const along of [-reach, 0, reach]) {
+      const nArr = T.normalAt(c.x + this.boardNose.x * along, c.z + this.boardNose.z * along, _nrm);
+      n.x += nArr[0]; n.y += nArr[1]; n.z += nArr[2];
+    }
+    n.normalize();
 
     // board frame, projected onto the snow
     const f = this.forward.copy(this.boardNose);
@@ -287,8 +306,18 @@ export class Rider {
       // fast you are going, so the force goes as v^2. A drag that saturates instead has no speed
       // limit of its own: it left a flat base sideslipping at 55 km/h on a 22 deg pitch while
       // still being too grippy to get moving at all on a gentle one.
-      const ramp = Math.min(6, (vT / t.ploughRef) ** 2);
-      const bite = 0.25 + 0.75 * engage;
+      const ramp = Math.min(t.ploughMax, (vT / t.ploughRef) ** 2);
+      // Almost all of the ploughing is the EDGE. A flat base pushed sideways slides over the
+      // top of the snow and keeps most of its speed -- that is a drift, and it should feel like
+      // one. An edge at the same angle cuts a furrow and stops you. Charging both the same made
+      // every board angle past about 50 degrees a brake instead of a change of direction.
+      // Ploughing is the EDGE, and it has to scale with HOW MUCH edge. Scaling it by `engage`
+      // was wrong: that is a smoothstep already saturated by about 15 degrees, so a board tilted
+      // a few degrees ploughed exactly like one on a full edge. That is what made swinging the
+      // board across kill your speed without turning you much -- hands naturally hold the board
+      // near level, and level across a slope is only a small edge. Furrow depth goes with the
+      // sine of the edge angle, so that is what this scales with, reaching full bite at 45 deg.
+      const bite = 0.16 + 0.84 * Math.min(1, Math.sin(mag) / 0.7071);
       const aPlough = t.muSkidExtra * loadA * sb * sb * ramp * bite;
 
       // The edge force acts ACROSS the board, and the board is at a slip angle, so that force has
@@ -330,10 +359,24 @@ export class Rider {
     this.skidding = Math.min(1, Math.abs(vr) / 3) * (1 - rail * 0.7);
   }
 
+  // How far off the snow still counts as being on it. At 28 m/s a board covers 23 cm in a single
+  // physics step, and the heightfield has a slope crease every 2 m, so a fixed 5 cm band had the
+  // rider registering as airborne 51% of the time above 95 km/h and taking off nearly four times
+  // a second. That is the jitter: not noise in the terrain, but skipping off it.
+  contactEps() {
+    return this.t.contactEps + Math.min(this.t.contactEpsMax, this.speed * this.t.contactEpsGain);
+  }
+
   // Lowest point of the board against the snow, sampled along its length AND across its width,
   // because a board rolled onto an edge touches on that edge, not down its centre line.
   sampleContact() {
     const t = this.t, T = this.terrain;
+    // A board planes. At 30 m/s it skims the tops of anything small, and the heightfield is
+    // bilinear on a 2 m grid, so it has a slope crease at every cell edge that a rigid contact
+    // turns into a step straight into the rider's head -- measured at up to 900 m/s2 of vertical
+    // acceleration above 95 km/h, which is exactly the jitter you feel at speed. Widening the
+    // soft minimum with speed is what a planing board physically does.
+    const bridge = t.bridge + Math.min(t.bridgeMax, this.speed * t.bridgeGain);
     const half = t.boardLength * 0.5, halfW = t.boardWidth * 0.5;
     _side.crossVectors(this.boardUp, this.boardNose).normalize();
     let gap = Infinity, gx = this.boardPos.x, gz = this.boardPos.z;
@@ -346,7 +389,7 @@ export class Rider {
         const pz = this.boardPos.z + this.boardNose.z * along + _side.z * across;
         const gp = py - T.heightAt(px, pz);
         if (gp < gap) { gap = gp; gx = px; gz = pz; }
-        soft += Math.exp(-gp / t.bridge);
+        soft += Math.exp(-gp / bridge);
         if (along > 0 && gp < noseGap) noseGap = gp;
         if (along < 0 && gp < tailGap) tailGap = gp;
       }
@@ -357,7 +400,7 @@ export class Rider {
     // head. A real board is stiff and bridges small irregularities, and snow compresses under the
     // point that is bearing. This rounds the corner over roughly 3.5 cm and does nothing else:
     // on smooth ground every sample agrees and it returns the same answer as the hard minimum.
-    return { gap: -t.bridge * Math.log(soft / 9), x: gx, z: gz, noseGap, tailGap };
+    return { gap: -bridge * Math.log(soft / 9), x: gx, z: gz, noseGap, tailGap };
   }
 
   // The board may not go under the snow. Satisfying that is the whole of jumping: drive the
@@ -367,7 +410,7 @@ export class Rider {
     this.applyPose(pose);
     const c = this.sampleContact();
     this.contactGap = c.gap; this.noseGap = c.noseGap; this.tailGap = c.tailGap;
-    if (c.gap > t.contactEps) { this.grounded = false; return; }
+    if (c.gap > this.contactEps()) { this.grounded = false; return; }
 
     // Resolve PENETRATION only. Snapping the board back down onto the snow when it is already
     // clear of it would cancel every ollie the moment it started -- the rider would rise, get

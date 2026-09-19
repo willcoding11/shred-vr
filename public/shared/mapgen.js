@@ -10,16 +10,23 @@ import { gridToWorld, fbm } from './mapformat.js';
 const smooth01 = (t) => { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); };
 const tand = (d) => Math.tan((d * Math.PI) / 180);
 
+// Cell counts are what actually matter here: the terrain is one mesh with culling off, so a
+// headset is drawing every triangle of it every frame. These are chosen to keep that in range,
+// which is why the big ones use a coarser grid rather than simply more cells.
 export const PRESET_SIZES = {
   run: {
+    tiny:   { lengthM: 260,  widthM: 110, spacing: 2 },
     small:  { lengthM: 420,  widthM: 150, spacing: 2 },
     normal: { lengthM: 700,  widthM: 200, spacing: 2 },
     large:  { lengthM: 1040, widthM: 260, spacing: 2 },
+    huge:   { lengthM: 1600, widthM: 320, spacing: 3 },
   },
   mountain: {
-    small:  { lengthM: 600,  widthM: 600,  spacing: 3 },
+    tiny:   { lengthM: 300,  widthM: 300,  spacing: 2 },
+    small:  { lengthM: 560,  widthM: 560,  spacing: 2 },
     normal: { lengthM: 1020, widthM: 1020, spacing: 3 },
     large:  { lengthM: 1500, widthM: 1500, spacing: 4 },
+    huge:   { lengthM: 2100, widthM: 2100, spacing: 5 },
   },
 };
 
@@ -99,7 +106,10 @@ export function buildMountain(map, { relief = 1, rough = 1, seed = Math.random()
       const b = smooth01(behind / 130);
       y += (Math.pow(Math.abs(wx) / (spanX * 0.34), 2) * 10 - behind * 0.075) * b;
     }
-    y += Math.pow(Math.max(0, Math.abs(wx) - spanX * 0.35) / (spanX * 0.21), 2) * 74 * smooth01((wz - 180) / 180);
+    // Far shoulders, scaled to the map. Hard-coding 74 m of rise and a 180 m fade made them
+    // tower over a small hill and vanish on a big one.
+    y += Math.pow(Math.max(0, Math.abs(wx) - spanX * 0.35) / (spanX * 0.21), 2) * reach * 0.085
+       * smooth01((wz - spanZ * 0.18) / (spanZ * 0.18));
     if (rough > 0) {
       y += fbm(wx * 0.0045 + seed, wz * 0.0045 + seed * 2, 4) * 3.0 * rough;
       y += fbm(wx * 0.018 + seed, wz * 0.018, 3) * 1.0 * rough;

@@ -24,10 +24,20 @@ export class LiveClient {
     };
     ws.onclose = () => {
       this.connected = false; this.emit('close', {});
+      if (this.closing) return;
       setTimeout(() => this.connect(), this.backoff);
       this.backoff = Math.min(5000, this.backoff * 1.6);
     };
     ws.onerror = () => ws.close();
+    // Hang up when the page goes away. A browser does not reliably close a WebSocket on
+    // navigation -- it can sit half-open until the server's ping reaper notices -- and the editor
+    // counts those as live headsets. Six of them had accumulated on a server left running
+    // overnight. `closing` stops onclose from starting the reconnect timer on the way out.
+    if (!this._bye) {
+      this._bye = () => { this.closing = true; try { this.ws?.close(); } catch {} };
+      addEventListener('pagehide', this._bye);
+      addEventListener('beforeunload', this._bye);
+    }
   }
   on(type, fn) { (this.handlers[type] ||= []).push(fn); return this; }
   emit(type, msg) { for (const fn of this.handlers[type] || []) fn(msg); }

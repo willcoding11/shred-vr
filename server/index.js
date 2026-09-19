@@ -72,7 +72,9 @@ app.get('/api/info', async (req, res) => {
   const httpUrl = `http://${ip}:${HTTP_PORT}/game/`;
   const qr = await QRCode.toDataURL(httpsUrl, { margin: 1, width: 220, color: { dark: '#0b1220', light: '#ffffff' } });
   res.json({ ip, httpPort: HTTP_PORT, httpsPort: HTTPS_PORT, httpsUrl, httpUrl, qr,
-    clients: clientCounts(), activeMap: readState().activeMap || null });
+    clients: clientCounts(), activeMap: readState().activeMap || null,
+    clientList: [...clients].map((c) => ({ role: c.role, ip: c.ip, agent: c.agent,
+      mins: +((Date.now() - c.since) / 60000).toFixed(1) })) });
 });
 app.get('/api/maps', (req, res) => res.json(listMaps()));
 app.get('/api/maps/:id', (req, res) => {
@@ -127,9 +129,21 @@ app.put('/api/state', (req, res) => {
 
 // ---------- websocket relay ----------
 const clients = new Set();
+// A game client on this machine is a desktop preview tab, not a headset. Counting them together
+// made the editor report "6 headsets live" when all six were Chrome tabs on localhost and the
+// Quest was not connected at all -- which is a badge that lies in the one direction that matters,
+// because you trust it to tell you your edits are reaching the thing on your face.
+function isHeadset(cl) {
+  if (cl.agent === 'Quest browser') return true;
+  const ip = cl.ip || '';
+  return !(ip === '127.0.0.1' || ip === '::1' || ip === 'localhost');
+}
 function clientCounts() {
-  const c = { game: 0, editor: 0 };
-  for (const cl of clients) c[cl.role] = (c[cl.role] || 0) + 1;
+  const c = { game: 0, editor: 0, headset: 0, preview: 0 };
+  for (const cl of clients) {
+    c[cl.role] = (c[cl.role] || 0) + 1;
+    if (cl.role === 'game') c[isHeadset(cl) ? 'headset' : 'preview']++;
+  }
   return c;
 }
 function broadcast(msg, filter = () => true, except = null) {
@@ -141,8 +155,18 @@ function broadcast(msg, filter = () => true, except = null) {
 }
 function attachWs(server) {
   const wss = new WebSocketServer({ server, path: '/ws' });
-  wss.on('connection', (ws) => {
-    const cl = { ws, role: 'unknown' };
+  wss.on('connection', (ws, req) => {
+    // Who this actually is. "6 headsets live" with no way to see what the six ARE is a number you
+    // cannot act on -- the honest answer turned out to be six real pages left open, not six stale
+    // sockets, and there was no way to tell those apart from outside.
+    const ua = String(req.headers['user-agent'] || '');
+    const cl = {
+      ws, role: 'unknown', since: Date.now(),
+      ip: String(req.socket.remoteAddress || '').replace(/^::ffff:/, ''),
+      agent: /OculusBrowser|Quest/i.test(ua) ? 'Quest browser'
+        : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome'
+        : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'unknown',
+    };
     clients.add(cl);
     ws.on('message', (raw) => {
       let msg; try { msg = JSON.parse(raw); } catch { return; }
@@ -184,10 +208,13 @@ function attachWs(server) {
 // would mark a socket dead and terminate it before its pong could arrive.
 setInterval(() => {
   for (const cl of clients) {
-    if (cl.alive === false) { try { cl.ws.terminate(); } catch {} continue; }
+    // Drop it from the set here as well as in the close handler. terminate() does normally fire
+    // 'close', but a socket that is already half-dead may not, and then it counts as live for ever.
+    if (cl.alive === false) { try { cl.ws.terminate(); } catch {} clients.delete(cl); continue; }
     cl.alive = false;
     try { cl.ws.ping(); } catch {}
   }
+  broadcast({ type: 'clients', counts: clientCounts() });
 }, 15000).unref();
 
 // ---------- certs + servers ----------

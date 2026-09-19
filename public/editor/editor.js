@@ -116,8 +116,11 @@ function setLive(on) {
   el.className = 'pill live ' + (on ? (diverged ? 'warn' : 'on') : 'off');
   el.textContent = !on ? 'Reconnecting…'
     : diverged ? `Headset is on "${headsetMap}"`
-      : counts.game ? `${counts.game} headset${counts.game > 1 ? 's' : ''} live` : 'Live · no headset yet';
-  el.title = diverged ? 'Your edits are not reaching the headset because it is on a different map. Turn on "Headset follows editor", or switch to that map.' : '';
+      : counts.headset ? `${counts.headset} headset${counts.headset > 1 ? 's' : ''} live`
+        : counts.preview ? `${counts.preview} preview${counts.preview > 1 ? 's' : ''} · no headset`
+          : 'Live · no headset yet';
+  el.title = diverged ? 'Your edits are not reaching the headset because it is on a different map. Turn on "Headset follows editor", or switch to that map.'
+    : counts.preview ? `${counts.preview} desktop preview tab(s) on this PC are connected as well.` : '';
 }
 
 // ---------------- saving ----------------

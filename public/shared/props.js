@@ -116,17 +116,38 @@ function hut() {
   return mergeGeometries(parts);
 }
 
+const rnd = (seed) => { let s = seed; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; };
+
+// SEVERAL OF EACH SPECIES, not one.
+//
+// The random source used to be drawn once per species, so realConifer produced exactly one pine
+// geometry and it was instanced four hundred and seventy-nine times: in any shot of a stand you
+// could read the same white snow collars in the same places on tier 3 and tier 7 of every tree in
+// frame. Four geometries per conifer and three per birch is eleven extra draw calls in total, and
+// it is the difference between a forest and wallpaper.
+let vcache = null, vcacheQ = null;
+export function propVariants(quality = 'fast') {
+  if (vcache && vcacheQ === quality) return vcache;
+  if (vcache) for (const list of Object.values(vcache)) for (const g of list) g.dispose();
+  vcacheQ = quality;
+  const mk = (n, f) => Array.from({ length: n }, (_, i) => { const g = f(i); g.computeBoundingSphere(); return g; });
+  vcache = quality === 'real' ? {
+    pine: mk(4, (i) => mergeGeometries(realConifer({ height: 7.3 + i * 0.75, rand: rnd(101 + i * 977), snowy: 0.56 + i * 0.10 }))),
+    fir: mk(4, (i) => mergeGeometries(realConifer({ height: 9.1 + i * 0.85, rand: rnd(313 + i * 641), snowy: 0.68 + i * 0.08, dark: true }))),
+    birch: mk(3, (i) => mergeGeometries(realBirch({ height: 6.2 + i * 0.85, rand: rnd(57 + i * 433) }))),
+  } : { pine: mk(1, () => pine()), fir: mk(1, () => fir()), birch: mk(1, () => birch()) };
+  return vcache;
+}
+
 let cache = null, cacheQuality = null;
 export function propGeometries(quality = 'fast') {
   if (cache && cacheQuality === quality) return cache;
-  if (cache) for (const g of Object.values(cache)) g.dispose();
+  const keep = new Set(Object.values(vcache || {}).flat());
+  if (cache) for (const g of Object.values(cache)) if (!keep.has(g)) g.dispose();
   cacheQuality = quality;
-  const real = quality === 'real';
-  const rr = (() => { let s = 12345; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; })();
+  const v = propVariants(quality);
   cache = {
-    pine: real ? mergeGeometries(realConifer({ height: 8.4, rand: rr, snowy: 0.72 })) : pine(),
-    fir: real ? mergeGeometries(realConifer({ height: 10.2, rand: rr, snowy: 0.8, dark: true })) : fir(),
-    birch: real ? mergeGeometries(realBirch({ height: 7, rand: rr })) : birch(),
+    pine: v.pine[0], fir: v.fir[0], birch: v.birch[0],
     rock: rockGeo(1.0, '#6b7280', 1), boulder: rockGeo(2.4, '#4b5563', 7),
     gateA: gate('#ef4444'), gateB: gate('#3b82f6'),
     flag: flag(), fence: fence(), lamp: lamp(), sign: sign(), snowman: snowman(), hut: hut(),
@@ -146,7 +167,14 @@ export class PropRenderer {
     this.sync();
   }
   setMap(map) { this.map = map; this.sync(); }
-  geoKey(p, gateIndex) { return p.t === 'gate' ? (gateIndex % 2 ? 'gateB' : 'gateA') : p.t; }
+  // Trees are spread across the variant geometries BY POSITION, so a given tree is always the
+  // same tree: re-syncing after an edit must not reshuffle the forest.
+  geoKey(p, gateIndex) {
+    if (p.t === 'gate') return gateIndex % 2 ? 'gateB' : 'gateA';
+    const v = propVariants(this.quality)[p.t];
+    if (!v || v.length < 2) return p.t;
+    return p.t + '#' + (Math.abs(Math.round(p.x * 7.31 + p.z * 13.17)) % v.length);
+  }
   sync() {
     const geos = propGeometries(this.quality);
     const buckets = {};
@@ -164,17 +192,27 @@ export class PropRenderer {
       if (!m || m.userData.cap < list.length || m.userData.cap > list.length * 4 + 64) {
         if (m) { this.group.remove(m); m.dispose(); }
         const cap = Math.ceil(list.length * 1.5) + 16;
-        m = new THREE.InstancedMesh(geos[key], key === 'lamp' ? this.lampMat : this.material, cap);
+        const hash = key.indexOf('#');
+        const geo = hash < 0 ? geos[key] : propVariants(this.quality)[key.slice(0, hash)][+key.slice(hash + 1)];
+        m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : this.material, cap);
         m.userData.cap = cap;
+        // Per-instance tint. Every conifer was the identical green, because one material with no
+        // instanceColor is one colour however many variants of the mesh you build.
+        m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
         m.castShadow = this.shadows; m.receiveShadow = this.shadows;   // a forest where no tree shadows another is a flat cutout
         m.frustumCulled = false;
         m.name = 'prop:' + key;
         this.group.add(m); this.meshes[key] = m;
       }
       m.count = list.length;
+      const tree = key.startsWith('pine') || key.startsWith('fir') || key.startsWith('birch');
       list.forEach((p, i) => {
-        const y = heightAt(this.map, p.x, p.z) - 0.05;
         const s = p.s || 1;
+        // Trees stand straight while the ground does not, so a big one on a steep face floated
+        // clear of the snow on its downhill side and the lowest tier's skirt hung over it with a
+        // clean hard edge. Sinking it in proportion to its size buries that edge; the contact
+        // shading the terrain bakes around every trunk does the rest.
+        const y = heightAt(this.map, p.x, p.z) - 0.05 - (tree ? 0.30 * s : 0);
         tmpP.set(p.x, y, p.z);
         // trees stand straight, everything else tilts with the ground a little
         if (p.t === 'pine' || p.t === 'fir' || p.t === 'birch' || p.t === 'lamp' || p.t === 'sign' || p.t === 'snowman') {
@@ -189,8 +227,14 @@ export class PropRenderer {
         tmpS.set(s, s, s);
         tmpM.compose(tmpP, tmpQ, tmpS);
         m.setMatrixAt(i, tmpM);
+        if (m.instanceColor) {
+          const j = ((Math.sin(p.x * 91.7 + p.z * 47.3) * 43758.5453) % 1 + 1) % 1;
+          const v = 0.90 + j * 0.20;
+          m.instanceColor.setXYZ(i, v * (1 - j * 0.05), v, v * (0.97 + j * 0.06));
+        }
       });
       m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
       m.computeBoundingSphere();
     }
   }

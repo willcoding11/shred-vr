@@ -5,30 +5,30 @@
     "description": "An open mountain. Four faces around one valley, a cirque, a gully, cliffs, a frozen tarn and a park, all draining to the village.",
     "lengthM": 1017,
     "widthM": 1017,
-    "verticalDropM": 188.46795654296875,
-    "avgGradeDeg": 10.49880977294588,
-    "steepPct": 29.480760477574314,
-    "flatPct": 1.0118693323062917,
-    "maxSlopeDeg": 80.19408123180403,
+    "verticalDropM": 74.43206787109375,
+    "avgGradeDeg": 4.18589307510528,
+    "steepPct": 32.771961766044605,
+    "flatPct": 0.5987185322642765,
+    "maxSlopeDeg": 77.87832790927506,
     "slopeHistogram": [
-      2,
+      1,
       4,
-      8,
+      6,
       10,
-      15,
+      14,
       18,
       14,
       12,
       8,
-      9
+      13
     ],
-    "props": 1438,
+    "props": 1416,
     "gates": 0,
     "propCounts": {
       "pine": 545,
-      "fir": 507,
-      "birch": 194,
-      "boulder": 64,
+      "fir": 510,
+      "birch": 183,
+      "boulder": 50,
       "rock": 49,
       "sign": 10,
       "flag": 50,
@@ -39,13 +39,13 @@
     "profile": [
       {
         "z": 0,
-        "y": 483,
-        "gradeDeg": 0
+        "y": 429.8,
+        "gradeDeg": -47.2
       },
       {
         "z": 50,
-        "y": 476.8,
-        "gradeDeg": 32.1
+        "y": 475,
+        "gradeDeg": 29.1
       },
       {
         "z": 100,
@@ -84,13 +84,13 @@
       },
       {
         "z": 450,
-        "y": 197.5,
-        "gradeDeg": 42.3
+        "y": 197.2,
+        "gradeDeg": 48.4
       },
       {
         "z": 500,
-        "y": 163,
-        "gradeDeg": 15.4
+        "y": 162.6,
+        "gradeDeg": 14.5
       },
       {
         "z": 550,
@@ -144,8 +144,8 @@
       }
     ],
     "start": {
-      "x": 232.2451191574027,
-      "z": 44.5979205375387,
+      "x": 225.28997870940492,
+      "z": 120.46116157261417,
       "yaw": 0
     },
     "finish": {

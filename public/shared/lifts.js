@@ -9,6 +9,8 @@
 // one number the game needs, and it has to be the same one the chair mesh is drawn at.
 import * as THREE from 'three';
 import { heightAt } from './mapformat.js';
+import { mergeGeometries as _mergeLift } from 'three/addons/utils/BufferGeometryUtils.js';
+const mergeLift = (parts) => _mergeLift(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
 
 export const LIFT = {
   towerH: 8.5,        // m, mast height above the snow
@@ -117,9 +119,15 @@ export function baseNear(lines, x, z, radius = LIFT.boardRadius) {
 }
 
 // ---------------------------------------------------------------- rendering
+// envMapIntensity matters here more than anywhere else in the scene. The lift is the only man-made
+// thing in frame and the eye goes straight to it, and with scene.environmentIntensity at 0.55 the
+// image-based lighting we build a PMREM for was barely reaching the only metal in the world: a
+// galvanised mast and a steel cable were both rendering as flat grey plastic. A cable also wants
+// to be SMOOTH -- at roughness 0.6 it never caught a highlight along its length, and that highlight
+// is the one thing that tells you it is a cable rather than a line someone drew.
 const MAT = {
-  steel: new THREE.MeshStandardMaterial({ color: 0x5b6472, roughness: 0.55, metalness: 0.5 }),
-  cable: new THREE.MeshStandardMaterial({ color: 0x2b323c, roughness: 0.6, metalness: 0.4 }),
+  steel: new THREE.MeshStandardMaterial({ color: 0x5b6472, roughness: 0.42, metalness: 0.75, envMapIntensity: 2.0 }),
+  cable: new THREE.MeshStandardMaterial({ color: 0x2b323c, roughness: 0.25, metalness: 0.85, envMapIntensity: 2.2 }),
   chair: new THREE.MeshStandardMaterial({ color: 0xd2453c, roughness: 0.6, metalness: 0.1 }),
   seat: new THREE.MeshStandardMaterial({ color: 0x2a2f38, roughness: 0.8 }),
   house: new THREE.MeshStandardMaterial({ color: 0x8d99a8, roughness: 0.8 }),
@@ -127,8 +135,38 @@ const MAT = {
 
 function tower(line, i, shadows) {
   const t = line.towers[i], g = new THREE.Group();
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.46, t.h, 8), MAT.steel);
-  mast.position.y = t.h / 2; mast.castShadow = shadows; g.add(mast);
+  // A LATTICE, not a lamppost. One tapered cylinder with a box across the top was the most
+  // game-looking object on the mountain. Three splayed legs and a ladder of cross bracing is
+  // about forty triangles, merged into one geometry, and it reads as lift hardware immediately.
+  const parts = [];
+  const RT = 0.26, RB = 0.62, ang = (k) => (k / 3) * Math.PI * 2 + 0.3;
+  for (let k = 0; k < 3; k++) {
+    const a = ang(k);
+    const leg = new THREE.CylinderGeometry(0.075, 0.105, t.h, 5).translate(0, t.h / 2, 0);
+    const p = leg.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), f = RT + (RB - RT) * (1 - y / t.h);
+      p.setXYZ(i, p.getX(i) + Math.cos(a) * f, y, p.getZ(i) + Math.sin(a) * f);
+    }
+    leg.computeVertexNormals();
+    parts.push(leg);
+  }
+  const bands = Math.max(2, Math.round(t.h / 2.6));
+  for (let b = 1; b <= bands; b++) {
+    const y = (b / (bands + 1)) * t.h, f = RT + (RB - RT) * (1 - y / t.h);
+    for (let k = 0; k < 3; k++) {
+      const a0 = ang(k), a1 = ang(k + 1);
+      const x0 = Math.cos(a0) * f, z0 = Math.sin(a0) * f, x1 = Math.cos(a1) * f, z1 = Math.sin(a1) * f;
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      const bar = new THREE.CylinderGeometry(0.045, 0.045, len, 4);
+      bar.rotateZ(Math.PI / 2); bar.rotateY(-Math.atan2(z1 - z0, x1 - x0));
+      bar.translate((x0 + x1) / 2, y, (z0 + z1) / 2);
+      parts.push(bar);
+    }
+  }
+  parts.push(new THREE.CylinderGeometry(RB + 0.3, RB + 0.34, 0.3, 12).translate(0, 0.15, 0));  // base plate
+  const mast = new THREE.Mesh(mergeLift(parts), MAT.steel);
+  mast.castShadow = shadows; g.add(mast);
   const arm = new THREE.Mesh(new THREE.BoxGeometry(LIFT.gauge + 1.4, 0.26, 0.4), MAT.steel);
   arm.position.y = t.h; arm.castShadow = shadows;
   arm.rotation.y = Math.atan2(line.side.x, line.side.z) + Math.PI / 2;

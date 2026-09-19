@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { realSkyVert, realSkyFrag } from './realism.js';
 import { fbm } from './mapformat.js';
+import { makeSnowTexture } from './terrain.js';
 
 const skyVert = `
 varying vec3 vDir;
@@ -20,8 +21,13 @@ void main(){
 }`;
 
 export class Scenery {
-  constructor(scene, { shadows = true, shadowSize = 2048, mountains = true, quality = 'fast', renderer = null } = {}) {
+  constructor(scene, { shadows = true, shadowSize = null, mountains = true, quality = 'fast', renderer = null } = {}) {
     this.quality = quality; this.renderer = renderer;
+    // Derived from the quality, not defaulted to Fast's. setQuality early-returns when the quality
+    // has not CHANGED, and the game constructs Scenery already set to 'real' -- so the 4096 bump
+    // in there never ran and the Real preset quietly loaded with a 2048 map. You could only get
+    // the intended one by toggling the dropdown to Fast and back again.
+    shadowSize ??= quality === 'real' ? 4096 : 2048;
     this.scene = scene;
     this.sun = new THREE.DirectionalLight(0xffffff, 2.6);
     this.sun.castShadow = shadows;
@@ -69,8 +75,13 @@ export class Scenery {
   // fixed world height of -98 m. The runs descend 116 to 365 m, so on two of the three maps it
   // sliced straight through the hill: stand at the top, and a hard white plane cut off everything
   // below it. It has to live under the lowest point of whatever map is loaded.
-  setGround(lowestY) {
+  // Also where the map IS. The ring used to be re-centred on the camera every frame, which hid
+  // the fact that it is built around its own origin; standing it still without also moving it to
+  // the middle of the map left it centred on the map's north edge, so half of it sat behind the
+  // mountain and the other half was a kilometre too far away.
+  setGround(lowestY, cx = 0, cz = 0) {
     if (!this.mountains) return;
+    this.mountains.position.set(cx, this.mountains.userData.baseY, cz);
     const floor = this.mountains.userData.floor;
     if (floor) floor.position.y = lowestY - 12 - this.mountains.userData.baseY;
   }
@@ -123,7 +134,18 @@ export class Scenery {
     // sheet. At a ski latitude the winter sun peaks around 20-25 degrees, and that raking light
     // is the single biggest thing that makes snow legible.
     const elev = Math.sin(t * Math.PI) * 0.50 + 0.07;   // radians: ~28 deg at midday, 4 at dawn
-    const az = (t - 0.5) * Math.PI * 1.2 + 0.4;
+    // Azimuth, and it matters more than it looks. At +0.4 the sun sat almost straight down the
+    // valley, which is the one direction that lights every face of a mountain equally: measured
+    // over the whole heightfield, the most sun-averted face on the map was dot(N, sun) = -0.11, so
+    // there was no terminator anywhere on it at any time of day. Swung round to rake across the
+    // fall line instead, every spur, gully wall and roller has a lit side and a shaded one, which
+    // is most of why a photograph of snow reads as landscape rather than as a bedsheet.
+    //
+    // It is easy to overshoot this. At -1.15 the sun ended up BEHIND the summit: the whole
+    // mountain was backlit, the baked shadow covered 56% of the map and the hill went a flat
+    // grey. -0.23 puts it about 65 degrees off the fall line at the times of day the maps use --
+    // raking across the faces, still in front of them.
+    const az = (t - 0.5) * Math.PI * 1.2 - 0.23;
     const dir = new THREE.Vector3(Math.cos(elev) * Math.sin(az), Math.sin(elev), Math.cos(elev) * Math.cos(az)).normalize();
     this.sunDir = dir;
     this.sun.position.copy(dir).multiplyScalar(220);
@@ -156,11 +178,16 @@ export class Scenery {
     this.sunTarget.position.copy(viewerPos);
     this.sun.position.copy(viewerPos).addScaledVector(this.sunDir, 220);
     this.sky.position.copy(camera.position);
-    if (this.mountains) this.mountains.position.set(camera.position.x, this.mountains.userData.baseY, camera.position.z);
+    // The ring used to be pinned to the camera every frame, so 480 m of descent moved the far
+    // peaks not one pixel and the strongest scale cue in the scene was dead. The map is a kilometre
+    // across and the ring starts at 1.2 km, so letting it stand still costs nothing and buys the
+    // parallax back.
+    if (this.mountains?.userData.pinned) this.mountains.position.set(camera.position.x, this.mountains.userData.baseY, camera.position.z);
     this.snow.update(dt, camera.position, this.env.wind ?? 0.2);
   }
 }
 
+const _HAZE = new THREE.Color(0.72, 0.79, 0.90);
 function makeMountains() {
   // A ring of jagged peaks 1.2 - 2.5 km out, drawn as a cylinder strip with an fbm skyline.
   const segs = 220, rings = 6, R0 = 1200, R1 = 2600;
@@ -174,8 +201,14 @@ function makeMountains() {
       const peakness = Math.pow(ridge, 1.6);
       const y = -60 + peakness * (380 + 380 * (j / rings)) * (0.6 + 0.4 * Math.sin(j * 1.3 + a * 7));
       pos.push(Math.cos(a) * r, y, Math.sin(a) * r);
-      const snowy = y > 120 ? 1 : Math.max(0, (y - 20) / 100);
-      c.setRGB(0.42 + 0.5 * snowy, 0.47 + 0.47 * snowy, 0.56 + 0.42 * snowy);
+      // Coloured by STEEPNESS as well as height, so rock bands show on the faces too steep to
+      // hold snow, and washed toward the sky with distance. One snowline test gave every peak a
+      // single flat value and the whole ring read as folded paper.
+      const steep = Math.min(1, Math.abs(Math.sin(a * 11.0 + j * 2.3)) * 0.45 + peakness * 0.5);
+      const snowy = Math.max(0, Math.min(1, (y - 20) / 110)) * (1 - steep * 0.72);
+      const rock = 1 - snowy;
+      c.setRGB(0.34 * rock + 0.92 * snowy, 0.35 * rock + 0.95 * snowy, 0.41 * rock + 1.0 * snowy);
+      c.lerp(_HAZE, Math.min(0.64, ((r - R0) / (R1 - R0)) * 0.55 + 0.08));
       col.push(c.r, c.g, c.b);
     }
   }
@@ -189,8 +222,12 @@ function makeMountains() {
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx); g.computeVertexNormals();
   const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
-  m.userData.baseY = -40; m.frustumCulled = false; m.name = 'mountains';
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(1300, 48), new THREE.MeshStandardMaterial({ color: 0xe9f0f8, roughness: 1 }));
+  m.userData.baseY = -40; m.userData.pinned = false; m.frustumCulled = false; m.name = 'mountains';
+  // The valley floor. A flat untextured disc at one value is a dead giveaway at any distance,
+  // and it is a big part of frame from anywhere high on the hill.
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0xe9f0f8, roughness: 0.95 });
+  floorMat.map = makeSnowTexture(256); floorMat.map.repeat.set(160, 160);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(1300, 64), floorMat);
   floor.rotation.x = -Math.PI / 2; floor.position.y = -58; floor.receiveShadow = false;
   floor.name = 'valleyFloor';
   m.add(floor);

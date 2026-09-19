@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createMap, serializeMap, applyBrush, fbm, gridToWorld, baseHeight, mapStats,
-  slopeDegAt, PROP_TYPES,
+  slopeDegAt, heightAt, PROP_TYPES,
 } from '../public/shared/mapformat.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -854,7 +854,10 @@ function alpineBowl() {
   // 0.36 and not the 0.62 that would balance them, because the axis leans 165 m east by the time
   // it reaches the rim and the on-map bearing range up there is only about -0.87 to +0.40: a ramp
   // at 0.62 would have been a drop-in 165 m past the edge of the world.
-  const RAMPS = [-0.80, 0.06, 0.36];
+  // -0.72 sits just west of the couloir, which owns the rim from about -0.73 to -0.38. Further
+  // west than this is worse, not better: the valley axis leans 165 m east as it climbs, so the
+  // west rim runs into the map edge and the far shoulder, and -0.92 measured 67 degrees.
+  const RAMPS = [-0.72, 0.06, 0.36];
   const rimGate = (th) => {
     let open = 0;
     for (const r of RAMPS) { const u = (th - r) / 0.13; open = Math.max(open, Math.exp(-u * u)); }
@@ -941,6 +944,14 @@ function alpineBowl() {
     y += Math.pow(Math.max(0, Math.abs(wx) - 400) / 170, 2) * 48 * smooth01((wz - 180) / 180);
     // Roll everything off as it approaches the ceiling, so no corner of the map can out-climb the
     // summit. Exponential rather than a clamp, because a clamp is a crease you can see.
+    // THE FAR SIDE OF THE RIDGE. The mountain was still climbing when it ran out of map, so the
+    // heightfield's edge skirt hung from the highest ground on it -- and the lift put you down
+    // 19 m from that edge. Stand at the start gate, turn round, and the world behind you was a
+    // seven-hundred-metre grey curtain fifty metres away. A ridge you can stand on has ground
+    // falling away on BOTH sides; with the crest pulled back to z = 60 or so, the skirt hangs
+    // below your sightline and what you see over the top is sky and the far peaks.
+    y -= Math.pow(smooth01((70 - wz) / 70), 2) * 100;
+
     const over = y - (CAP() - CAPSOFT);
     if (over > 0) y = CAP() - CAPSOFT + CAPSOFT * (1 - Math.exp(-over / CAPSOFT));
     // The peak is added AFTER the ceiling, because it is the thing the ceiling exists to protect.
@@ -1060,10 +1071,14 @@ function alpineBowl() {
       if (d < 620 || d > 880) continue;
       const c = -0.70 + twist(d);
       const a = Math.abs(th - c) / 0.055;
-      if (a > 5) continue;                 // walls only, not the whole annulus
+      // a < 3.2, not a < 5. At five half-widths this "narrow slot" reached 0.275 radians either
+      // side of its centre, which at rim height is 220 m -- it covered the entire west rim, and
+      // the west drop-in ramp was being built on top of the couloir's own wall. That measured
+      // 60 degrees off a ramp meant to be 40.
+      if (a > 3.2) continue;               // walls only, not the whole annulus
       const env = Math.min(1, (d - 620) / 60, (880 - d) / 60);
       // a slot: the floor drops, the walls stand either side of it, and both fade out by a=5
-      const wall = Math.min(1, Math.max(0, (a - 1) / 1.6)) * (1 - smooth01((a - 2.6) / 2.4));
+      const wall = Math.min(1, Math.max(0, (a - 1) / 1.1)) * (1 - smooth01((a - 2.1) / 1.1));
       map.heights[z * w + x] += (wall * 22 - (1 - Math.min(1, a)) * 5) * env;
     }
   }
@@ -1148,26 +1163,51 @@ function alpineBowl() {
     const env = Math.min(1, (d - 170) / 60, (520 - d) / 70);
     const { th: rth } = polar(wx, wz);
     const phase = (d - 170) + Math.sin(rth * 2.7) * 74 + Math.sin(rth * 5.1 + 1.3) * 26;
-    // Left running across the cat track on purpose. Clearing a corridor through them measured
-    // worse, not better: the rollers are what break a traverse line up, and with the corridor
-    // planed smooth four of eight descents stopped descending and followed the bench instead.
-    map.heights[z * w + x] += (Math.sin(phase / 52 * Math.PI * 2) * 0.5 + 0.5) * 1.25 * env;
+    // Cut through where the cat track crosses them. A 1.25 m roller crest standing a metre outside
+    // the bench's downhill lip is a lip of its own, and the bench has already taken your speed by
+    // the time you reach it: the sim rider -- real physics, not a tracer -- came to a dead stop at
+    // (104, 483) and sat there for the remaining hundred seconds of the run.
+    //
+    // A gradient tracer says this change is a regression, because with the corridor planed smooth
+    // it follows the bench instead of leaving it. The rider says otherwise, and the rider is the
+    // thing being built for.
+    const clear = smooth01((Math.abs(d - (430 - rth * 42)) - 14) / 20);
+    map.heights[z * w + x] += (Math.sin(phase / 52 * Math.PI * 2) * 0.5 + 0.5) * 1.25 * env * clear;
   }
 
   // 7. A CAT TRACK cut across the mountain, linking the faces at the mid bench. Flat, obvious,
   //    and the thing that makes a mountain feel like somewhere people go rather than a shape.
   {
+    // The lip heights are sampled from the FINISHED ground, and sampled BEFORE anything is cut.
+    // shape() is only the smooth base surface: by this point the map also carries three octaves of
+    // noise, the rollers and the moguls, which is four more metres of it. Anchoring the bench to
+    // the smooth surface therefore cut it a couple of metres into the real ground and left a 0.8 m
+    // pool along its downhill lip -- and the sim rider, which is real physics rather than a
+    // gradient walker, came to a dead stop in that pool and sat in it for a hundred seconds.
+    const LIP_N = 170, LIP_A = -1.42, LIP_B = 1.37;
+    const lipY = new Float32Array(LIP_N + 1);
+    for (let i = 0; i <= LIP_N; i++) {
+      const th = LIP_A + (LIP_B - LIP_A) * (i / LIP_N);
+      const [lx, lz] = atPolar(430 - th * 42 - 16, th);
+      lipY[i] = heightAt(map, lx, lz);
+    }
+    const lipAt = (th) => {
+      const t = Math.min(LIP_N - 1e-6, Math.max(0, ((th - LIP_A) / (LIP_B - LIP_A)) * LIP_N));
+      const k = t | 0; return lipY[k] + (lipY[k + 1] - lipY[k]) * (t - k);
+    };
     for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
       const [wx, wz] = gridToWorld(map, x, z);
       const { d, th } = polar(wx, wz);
       if (th < -1.35 || th > 1.30) continue;
       const line = 430 - th * 42;
       const off = Math.abs(d - line);
-      if (off > 12) continue;
+      if (off > 16) continue;
       // Tapered at BOTH ENDS of its bearing range as well as across its width. Stopping the cut
       // dead at th = -1.35 left the bench's west end as a 6.2 m hole in the hillside at (-400, 798).
       const ends = smooth01((th + 1.35) / 0.24) * (1 - smooth01((th - 1.06) / 0.24));
-      const k = (1 - smooth01((off - 5) / 7)) * ends;
+      // A wider taper, because the bank above the bench is whatever the cut depth is spread over
+      // whatever the taper is: 5 m over 7 was 61 degrees, which is a cliff, not a cut face.
+      const k = (1 - smooth01((off - 4) / 12)) * ends;
       // ANCHORED AT ITS OWN DOWNHILL LIP. Three rounds of this have now shown the same thing from
       // three directions: a bench whose floor sits below the natural ground at its downhill edge is
       // a dam, and it does not matter how it got there. Filling the outside built an 8 m lip that
@@ -1178,8 +1218,11 @@ function alpineBowl() {
       // exactly where the bench ends, so there is never a step up to leave it by, and the 4 degrees
       // of outslope across the whole width means it is never level either. What is left above the
       // track is a cut bank you drop in off, which is what a cat track looks like anyway.
-      const dLo = line - 12;
-      const target = shape(...atPolar(dLo, th)) + Math.max(0, d - dLo) * deg(6);
+      const dLo = line - 16;
+      // Half a metre ABOVE the lip, never below it. The bench has to meet the hillside at its
+      // downhill edge or it is a trough, and half a metre of margin covers what is left of the
+      // noise between one sample of the lip and the next.
+      const target = lipAt(th) + 0.5 + Math.max(0, d - dLo) * deg(6);
       if (map.heights[z * w + x] > target) map.heights[z * w + x] += (target - map.heights[z * w + x]) * k;
     }
   }
@@ -1216,8 +1259,8 @@ function alpineBowl() {
   // for. The West Bowl Chair used to stop at d = 660, which is 40 m from the BOTTOM of the
   // couloir -- you could not ride the couloir from the only lift on that side of the mountain
   // without hiking 176 vertical metres first.
-  const [t1x, t1z] = atPolar(888, 0.06);
-  const [t2x, t2z] = atPolar(858, -0.80);
+  const [t1x, t1z] = atPolar(812, 0.06);
+  const [t2x, t2z] = atPolar(838, -0.72);
   map.lifts = [
     { id: 'summit', name: 'Summit Express', base: { x: 46, z: BZ - 26 }, top: { x: t1x, z: t1z } },
     { id: 'west', name: 'West Bowl Chair', base: { x: -96, z: BZ - 34 }, top: { x: t2x, z: t2z } },
@@ -1266,7 +1309,13 @@ function alpineBowl() {
     keepOut: (x, z) => keep(x, z) || Math.hypot((x + 306) / 66, (z - 818) / 52) > 1 });
   for (let i = 0; i < 9; i++) place(map, rand() < 0.5 ? 'rock' : 'boulder', -306 + (rand() - 0.5) * 120, 818 + (rand() - 0.5) * 96, { s: 1 + rand() * 0.8, r: rand() * 3 });
   for (let i = 0; i < 16; i++) place(map, rand() < 0.35 ? 'rock' : 'boulder', 332 + (rand() - 0.5) * 46, 776 + (rand() - 0.5) * 150, { s: 1.2 + rand() * 1.0, r: rand() * 3 });
-  for (let i = 0; i < 14; i++) place(map, rand() < 0.5 ? 'rock' : 'boulder', 150 + (rand() - 0.5) * 170, 338 + rand() * 46, { s: 1.1 + rand() * 0.9, r: rand() * 3 });
+  // Boulders below the wind lip, but held off its centre: at fourteen across the full width this
+  // was a wall rather than a field, and the sim rider hit two of them at 17 m/s on the way through.
+  // A hazard you pick a line past is a feature; one you cannot get round is a fence.
+  for (let i = 0; i < 10; i++) {
+    const off = (rand() < 0.5 ? -1 : 1) * (34 + rand() * 62);
+    place(map, rand() < 0.5 ? 'rock' : 'boulder', 150 + off, 336 + rand() * 54, { s: 1.1 + rand() * 0.9, r: rand() * 3 });
+  }
   { place(map, 'sign', 150, 292, { r: Math.PI }); place(map, 'flag', 108, 298); place(map, 'flag', 192, 298); }
   // a hamlet on the east shoulder: the upper-centre band had nothing in it at all
   { place(map, 'hut', 306, 340, { r: -0.4, s: 1.3 }); place(map, 'hut', 336, 356, { r: 0.6, s: 1.0 });
@@ -1321,7 +1370,31 @@ function alpineBowl() {
 
   // The ways off the top, in world coordinates, so the harness can verify each one is rideable
   // and the signs below stand where they actually are.
-  map.dropIns = RAMPS.map((th) => { const [x, z] = atPolar(872, th); return { x: +x.toFixed(1), z: +z.toFixed(1) }; });
+  // WHERE THE RAMP ACTUALLY IS, not where its bearing says it is. A bearing is a construction
+  // device; a rider meets ground. Placing these by formula kept putting one of them somewhere the
+  // formula had not anticipated -- at th = -0.80, d = 802 the marker landed at x = -413, out where
+  // the far shoulder starts to bite, and it measured 71 degrees off a ramp built to be 40. So each
+  // one is searched for on the finished heightfield: walk the fall line 300 m from every candidate
+  // near the ramp and keep the one whose worst slope is lowest.
+  const bestDrop = (th0) => {
+    let best = atPolar(802, th0), bestS = 1e9;
+    for (let d = 730; d <= 870; d += 10) for (let dt = -0.15; dt <= 0.151; dt += 0.03) {
+      const [x, z] = atPolar(d, th0 + dt);
+      if (Math.abs(x) > 470 || z < 24 || z > 980) continue;
+      let worst = slopeDegAt(map, x, z), cx2 = x, cz2 = z;
+      for (let i = 0; i < 100; i++) {          // 300 m, the same distance the harness judges it over
+        const gx = heightAt(map, cx2 + 3, cz2) - heightAt(map, cx2 - 3, cz2);
+        const gz = heightAt(map, cx2, cz2 + 3) - heightAt(map, cx2, cz2 - 3);
+        const g = Math.hypot(gx, gz); if (g < 1e-4) break;
+        cx2 -= (gx / g) * 3; cz2 -= (gz / g) * 3;
+        if (Math.abs(cx2) > 490 || cz2 < 6 || cz2 > 1000) break;
+        worst = Math.max(worst, slopeDegAt(map, cx2, cz2));
+      }
+      if (worst < bestS) { bestS = worst; best = [x, z]; }
+    }
+    return best;
+  };
+  map.dropIns = RAMPS.map((th) => { const [x, z] = bestDrop(th); return { x: +x.toFixed(1), z: +z.toFixed(1) }; });
   for (const p of map.dropIns) { place(map, 'sign', p.x, p.z, { r: Math.PI }); place(map, 'flag', p.x + 11, p.z + 7); place(map, 'flag', p.x - 11, p.z + 7); }
 
   map.start = { x: t1x + 14, z: t1z + 26, yaw: 0 };

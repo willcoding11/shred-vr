@@ -1,6 +1,6 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
-import { gridToWorld, slopeDegAt, heightAt, normalAt } from './mapformat.js';
+import { gridToWorld, slopeDegAt, heightAt, normalAt, PROP_TYPES } from './mapformat.js';
 import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
@@ -17,10 +17,15 @@ export function makeSnowTexture(size = 512) {
     // Corduroy: 8 lines per tile, so roughly one every 75 cm on the ground, at a contrast you
     // can actually see. Plus a coarse drift pattern, because a slope of pure parallel lines
     // reads as a machine part rather than as snow.
-    const stripe = Math.sin((y / size) * Math.PI * 2 * 60) * 7;   // ~13 cm grooves on an 8 m tile
-    const drift = Math.sin((x / size) * Math.PI * 2 * 3 + (y / size) * 5.1) * 4;
-    const n = (Math.random() - 0.5) * 7;
-    const v = 240 + stripe + drift + n;
+    // Amplitude 7 on a base of 240 is 3% in sRGB, and after linearisation and ACES it lands at
+    // about 1.5% on screen -- which is to say it was not there. Corduroy is a strong, obvious
+    // thing to look at on a groomed piste.
+    const stripe = Math.sin((y / size) * Math.PI * 2 * 60) * 24;  // ~13 cm grooves on an 8 m tile
+    // and a coarser band across them, because one frequency at one angle reads as machined cloth
+    const coarse = Math.sin((y / size) * Math.PI * 2 * 7 + Math.sin((x / size) * 6.0) * 0.8) * 9;
+    const drift = Math.sin((x / size) * Math.PI * 2 * 3 + (y / size) * 5.1) * 6;
+    const n = (Math.random() - 0.5) * 9;
+    const v = 238 + stripe + coarse + drift + n;
     d[i] = Math.max(0, v - 6); d[i + 1] = Math.max(0, v - 1); d[i + 2] = Math.min(255, v + 7); d[i + 3] = 255;
   }
   g.putImageData(img, 0, 0);
@@ -125,9 +130,87 @@ export class Terrain {
     this.geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     this.geometry.setIndex(new THREE.BufferAttribute(idx, 1));
     this.mesh.geometry = this.geometry;
+    this.bakeLight();
     this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 });
     this.geometry.computeBoundingSphere();
     this.buildSkirt();
+  }
+
+  // Where the sun is. Recolours the hill when it moves, and does nothing when it has not.
+  setSun(dir) {
+    if (!dir) return;
+    const d = this.sunDir;
+    if (d && Math.abs(d.x - dir.x) < 0.004 && Math.abs(d.y - dir.y) < 0.004 && Math.abs(d.z - dir.z) < 0.004) return;
+    this.sunDir = { x: dir.x, y: dir.y, z: dir.z };
+    this.bakeLight();
+    this.recolor();
+  }
+
+  // SUN SHADOWING AND CONTACT SHADING, baked into the vertex colours.
+  //
+  // Nothing was casting a shadow onto this hill at any scale worth seeing. The shadow map is a
+  // 220 m box around the rider, and terrain self-shadowing is switched off above 90k cells --
+  // which is every open-mountain map there is. So eight hundred metres of mountain rendered at one
+  // flat value, and the curvature shading was carrying the entire burden of making it readable.
+  //
+  // This is a horizon march: from each vertex, step toward the sun and ask whether anything on the
+  // way rises above the sun's own elevation angle. It covers the whole map rather than 110 m of
+  // it, it costs nothing per frame, and it is recomputed only when the sun moves. Steps are spaced
+  // quadratically, so near ground -- where a 2 m lip is worth catching -- is sampled every cell,
+  // and a ridge 500 m away still blocks.
+  //
+  // (An editor brush moves the ground without re-baking, so shadows go stale under the stroke
+  // until something calls setSun or rebuild again. That is a fair trade for not spending 80 ms
+  // per brush dab.)
+  bakeLight() {
+    const { w, h } = this.map.size, sp = this.map.spacing, H = this.map.heights;
+    const n = w * h;
+    if (!this.bake || this.bake.length !== n) this.bake = new Float32Array(n);
+    this.bake.fill(1);
+    const s = this.sunDir;
+    if (s) {
+      const horiz = Math.hypot(s.x, s.z) || 1e-6;
+      const dx = s.x / horiz, dz = s.z / horiz, tanSun = s.y / horiz;
+      const STEPS = 46, ts = new Float32Array(STEPS);
+      for (let k = 0; k < STEPS; k++) ts[k] = (k + 1) * (1 + (k + 1) * 0.06);
+      const soft = sp * 1.6;
+      for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
+        const i = z * w + x, y0 = H[i];
+        let blocked = 0;
+        for (let k = 0; k < STEPS; k++) {
+          const t = ts[k];
+          const gx = (x + dx * t + 0.5) | 0, gz = (z + dz * t + 0.5) | 0;
+          if (gx < 0 || gz < 0 || gx >= w || gz >= h) break;
+          const over = (H[gz * w + gx] - y0) - tanSun * t * sp;
+          if (over > 0) {
+            const f = Math.min(1, over / soft);
+            if (f > blocked) { blocked = f; if (blocked >= 1) break; }
+          }
+        }
+        this.bake[i] = 1 - blocked;
+      }
+    }
+    // Contact shading wherever something stands in the snow. A tree with no darkening where it
+    // meets the ground reads as a sticker on the slope, and this was the last thing in the scene
+    // with no occlusion of any kind. Free at runtime: it is the same vertex colours.
+    const marks = [];
+    for (const p of this.map.props) {
+      const t = PROP_TYPES[p.t];
+      if (!t) continue;
+      const big = p.t === 'hut' ? 4.5 : t.hard ? 1.2 + (p.s || 1) * 1.0 : 0;
+      if (big > 0) marks.push([p.x, p.z, big]);
+    }
+    for (const l of (this.map.lifts || [])) { marks.push([l.base.x, l.base.z, 6]); marks.push([l.top.x, l.top.z, 6]); }
+    for (const [px, pz, rad] of marks) {
+      const cxg = px / sp + (w - 1) / 2, czg = pz / sp, rg = rad / sp;
+      const z0 = Math.max(0, Math.floor(czg - rg)), z1 = Math.min(h - 1, Math.ceil(czg + rg));
+      const x0 = Math.max(0, Math.floor(cxg - rg)), x1 = Math.min(w - 1, Math.ceil(cxg + rg));
+      for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+        const u = Math.hypot(x - cxg, z - czg) / rg;
+        if (u >= 1) continue;
+        this.bake[z * w + x] *= 1 - 0.34 * Math.pow(1 - u, 1.6);
+      }
+    }
   }
 
   // The border, extruded downwards. Reads the finished heights, so call it after updateRegion.
@@ -136,7 +219,11 @@ export class Terrain {
     const { w, h } = this.map.size, H = this.map.heights;
     let low = Infinity;
     for (let i = 0; i < H.length; i++) if (H[i] < low) low = H[i];
-    const DEEP = low - 400;
+    // 400 m below the lowest point of the map was far below the valley floor disc that fills the
+    // gap out to the distant peaks, and the map's edge heights vary by three hundred metres -- so
+    // from the top of the hill the north border was a seven-hundred-metre curtain hanging in front
+    // of everything. It only has to reach a little under the floor.
+    const DEEP = low - 70;
     const edge = [];
     for (let x = 0; x < w; x++) edge.push([x, 0]);
     for (let z = 1; z < h; z++) edge.push([w - 1, z]);
@@ -147,13 +234,22 @@ export class Terrain {
     const rows = 7, vcount = n * rows;
     const pos = new Float32Array(vcount * 3), col = new Float32Array(vcount * 3), uv = new Float32Array(vcount * 2);
     const tint = (t, i, jitter) => {
-      // t = 0 at the lip, 1 at the bottom
-      const snow = Math.max(0, 1 - t * 4.5);
+      // t = 0 at the lip, 1 at the bottom.
+      // The snow carries a good deal further down than it used to. Four and a half rows of rock
+      // under a thin white line reads as a quarry face; a snowfield that gives way to rock as it
+      // steepens reads as the mountain carrying on past the edge of the map, which is the entire
+      // job of this thing.
+      const snow = Math.max(0, 1 - t * 2.3);
       const r = (0.30 + jitter * 0.09) * (1 - snow) + 0.93 * snow;
       const g = (0.29 + jitter * 0.08) * (1 - snow) + 0.95 * snow;
       const b = (0.30 + jitter * 0.08) * (1 - snow) + 0.99 * snow;
       const dark = 1 - Math.min(0.45, t * 0.5);
-      col[i * 3] = r * dark; col[i * 3 + 1] = g * dark; col[i * 3 + 2] = b * dark;
+      // and it washes toward the haze as it falls away, so it recedes instead of standing out as
+      // the one hard-edged object on the horizon
+      const haze = Math.min(0.5, t * 0.55);
+      col[i * 3] = (r * dark) * (1 - haze) + 0.72 * haze;
+      col[i * 3 + 1] = (g * dark) * (1 - haze) + 0.79 * haze;
+      col[i * 3 + 2] = (b * dark) * (1 - haze) + 0.90 * haze;
     };
     for (let i = 0; i < n; i++) {
       const [gx, gz] = edge[i], [wx, wz] = gridToWorld(this.map, gx, gz);
@@ -162,12 +258,17 @@ export class Terrain {
       for (let r = 0; r < rows; r++) {
         const t = r / (rows - 1);
         const v = i * rows + r;
-        // the face leans outward a little and is ragged, so it is not a machined plane
-        const lean = t * (5 + jitter * 7) + Math.sin(t * 9.1 + jitter * 6.3) * 2.6 * t;   // ledges, not a plane
+        // It runs OUT as far as it drops -- about 32 degrees, which is a mountainside. A fixed few
+        // metres of lean made it a vertical curtain, and the map's edge heights vary by three
+        // hundred metres, so from the top of the hill the border behind you was a four-hundred-
+        // metre wall hanging across the whole view. Tying the run to the drop means the steep
+        // edges fall away into the distance instead of standing up in front of you.
+        const drop = (y - DEEP) * (t * t);
+        const run = drop * (1.35 + jitter * 0.75) + Math.sin(t * 9.1 + jitter * 6.3) * 5.0 * t;
         const cxs = Math.sign(wx) || 1, czs = gz === 0 ? -1 : gz === h - 1 ? 1 : 0;
-        pos[v * 3] = wx + (gx === 0 || gx === w - 1 ? cxs * lean : 0);
-        pos[v * 3 + 1] = y - (y - DEEP) * (t * t);
-        pos[v * 3 + 2] = wz + czs * lean;
+        pos[v * 3] = wx + (gx === 0 || gx === w - 1 ? cxs * run : 0);
+        pos[v * 3 + 1] = y - drop;
+        pos[v * 3 + 2] = wz + czs * run;
         tint(t, v, jitter);
         uv[v * 2] = i * 0.35; uv[v * 2 + 1] = t * 40;
       }
@@ -226,6 +327,14 @@ export class Terrain {
         // frozen water, if the map says there is any here
         const ice = this.iceAt(wx, wz);
         if (ice > 0) _c.lerp(_ICE, ice * 0.85);
+        // Baked sun. Snow out of the sun is not merely darker, it is BLUE -- it is lit by the sky
+        // dome instead -- so the channels come down by different amounts. Flat darkening here
+        // made the shadowed ground look grey and dirty.
+        const lit = this.bake ? this.bake[i] : 1;
+        if (lit < 0.999) {
+          const k = (1 - lit) * (this.quality === 'real' ? 1 : 0.8);
+          _c.r *= 1 - k * 0.44; _c.g *= 1 - k * 0.35; _c.b *= 1 - k * 0.19;
+        }
       }
       col.array[i * 3] = _c.r; col.array[i * 3 + 1] = _c.g; col.array[i * 3 + 2] = _c.b;
     }

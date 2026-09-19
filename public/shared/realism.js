@@ -156,6 +156,36 @@ export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1 } = {}) {
       .replace('#include <worldpos_vertex>',
         '#include <worldpos_vertex>\n  vRealWorld = (modelMatrix * vec4(transformed,1.0)).xyz;\n  vRealNormal = normalize(mat3(modelMatrix) * objectNormal);');
     shader.fragmentShader = shader.fragmentShader
+      // TWO SCALES OF NORMAL. The map repeated once every 1.33 m and that single frequency was
+      // the only thing you could actually see in the snow -- at riding height it read as fabric
+      // weave. A second sample seven times finer, faded in over the last twenty metres, gives the
+      // surface grain where your eye is and leaves the far slope alone. One extra texture fetch,
+      // and only where the material is already sampling a normal map.
+      .replace('#include <normal_fragment_maps>', `
+    #ifdef USE_NORMALMAP_TANGENTSPACE
+      float _nd = length( vViewPosition );
+      float _fine = 1.0 - smoothstep( 4.0, 24.0, _nd );
+      vec3 nA = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+      vec3 nB = texture2D( normalMap, vNormalMapUv * 7.3 ).xyz * 2.0 - 1.0;
+      vec3 mapN = normalize( vec3( nA.xy + nB.xy * _fine * 0.85, nA.z ) );
+      mapN.xy *= normalScale;
+      normal = normalize( tbn * mapN );
+    #else
+      #include <normal_fragment_maps>
+    #endif
+      `)
+      // ZONE ROUGHNESS. The cheapest realism available: the same sun over a surface that is 0.45
+      // rough in one place and 0.80 in another separates tracked-out, wind-crusted and untouched
+      // snow without a single new texture. The mask comes off the UV, which on the terrain is
+      // world x/z in units of 8 m, so these are hundred-metre zones, not noise.
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+{
+  vec2 zp = vMapUv;
+  float z1 = sin( zp.x * 0.19 + sin( zp.y * 0.13 ) * 2.1 );
+  float z2 = sin( zp.y * 0.11 + sin( zp.x * 0.09 ) * 1.7 );
+  float zone = clamp( 0.5 + 0.28 * z1 + 0.22 * z2, 0.0, 1.0 );
+  roughnessFactor = clamp( roughnessFactor * ( 0.68 + 0.52 * zone ), 0.04, 1.0 );
+}`)
       .replace('#include <common>', `#include <common>
 varying vec3 vRealWorld;
 varying vec3 vRealNormal;
@@ -181,18 +211,32 @@ float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 4
   // diagonal lattice lying on the slope -- a net thrown over the snow rather than light coming
   // off it. The cells now grow with distance so they stay above a pixel, and the whole term is
   // gone by 30 m, where individual crystals are not resolvable anyway.
-  float near = 1.0 - smoothstep(6.0, 30.0, dist);
+  //
+  // The previous fix overcorrected: gated to 6-30 m, then thinned to one cell in ten, then given a
+  // specular exponent of 520, it could not be found in a single screenshot at any distance. The
+  // range now starts at the board rather than six metres out, where a rider actually is.
+  float near = 1.0 - smoothstep(3.0, 26.0, dist);
   if (near > 0.001) {
-    float cellSize = 34.0 / (1.0 + dist * 0.55);
+    float cellSize = 30.0 / (1.0 + dist * 0.5);
     vec3 cell = floor(vRealWorld * cellSize);
     float r1 = rhash(cell), r2 = rhash(cell + 7.1), r3 = rhash(cell + 19.3);
     vec3 facet = normalize(N + (vec3(r1, r2, r3) - 0.5) * 1.9);
     vec3 H = normalize(uSunDir + V);
-    float spec = pow(max(dot(facet, H), 0.0), 520.0);
-    float rare = step(0.90, r3);
+    float spec = pow(max(dot(facet, H), 0.0), 130.0);
+    float rare = step(0.72, r3);
     float grazing = smoothstep(0.0, 0.35, dot(N, uSunDir));
-    reflectedLight.directSpecular += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * near * 9.0;
+    reflectedLight.directSpecular += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * near * 5.5;
   }
+}`)
+      // AERIAL PERSPECTIVE. White fog on white snow does nothing, which is why a ridge 800 m away
+      // was arriving at exactly the contrast of the snow thirty metres from your feet. Distance
+      // does not just wash a mountain out, it turns it BLUE, and three instructions of blue is
+      // worth more here than any amount of fog. It has to sit after tone mapping and before the
+      // existing fog, which takes over past a kilometre.
+      .replace('#include <tonemapping_fragment>', `#include <tonemapping_fragment>
+{
+  float ad = length(cameraPosition - vRealWorld);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.60, 0.69, 0.84), smoothstep(110.0, 950.0, ad) * 0.36);
 }`);
   };
   mat.needsUpdate = true;

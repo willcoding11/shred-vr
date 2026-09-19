@@ -101,7 +101,8 @@ function applyMap(m, keepPosition = false) {
   scene.add(lifts.group);
   rebuildMarkers(); rebuildSpatial();
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
-  scenery.setGround(lowestHeight(map));
+  terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
+  scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
   if (!rider) rider = new Rider(terrain, { boardLength: settings.boardLength });
   rider.terrain = terrain;
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
@@ -256,7 +257,8 @@ live.on('env', (msg) => {
   if (!map || msg.id !== map.id) return;
   map.env = { ...map.env, ...msg.env };
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
-  scenery.setGround(lowestHeight(map));
+  terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
+  scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
   terrain.recolor(); flashLive();
 });
@@ -309,6 +311,7 @@ function applyQuality() {
   if (terrain) {
     scene.remove(terrain.mesh); terrain.geometry.dispose(); terrain.material.dispose();
     terrain = new Terrain(map, { shadows: settings.shadows, relief: settings.relief, quality: settings.quality });
+    terrain.setSun(scenery.sunDir);
     scene.add(terrain.mesh);
     if (rider) rider.terrain = terrain;
   }
@@ -615,6 +618,23 @@ function framePreview() { preview.angle = 0; }
 // because reviewing a mountain from one fixed circle around the start tells you almost nothing
 // about it. Call from the console: shredCam({ at:{x,z}, dist, yaw, pitch, spin:false }).
 window.shredCam = (o = {}) => { Object.assign(preview, o); if (o.at === null) preview.at = null; return preview; };
+// Everything a review needs to check a claim instead of squinting at a screenshot. Reviewing the
+// Real preset from pictures alone kept producing confident statements about which mesh or which
+// shadow map was in use that turned out to be wrong in both directions.
+window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings });
+window.shredDebug = () => ({
+  quality: settings.quality, shadows: settings.shadows,
+  tone: renderer.toneMapping, exposure: renderer.toneMappingExposure,
+  shadowMap: scenery.sun.shadow?.mapSize?.toArray(),
+  env: !!scene.environment, envIntensity: scene.environmentIntensity,
+  sun: scenery.sunDir && [+scenery.sunDir.x.toFixed(3), +scenery.sunDir.y.toFixed(3), +scenery.sunDir.z.toFixed(3)],
+  fog: [scene.fog?.near, scene.fog?.far],
+  terrainCastShadow: terrain?.mesh.castShadow,
+  bake: terrain?.bake ? (() => { let lo = 1, hi = 0, sum = 0; for (const v of terrain.bake) { if (v < lo) lo = v; if (v > hi) hi = v; sum += v; }
+    return { min: +lo.toFixed(3), max: +hi.toFixed(3), mean: +(sum / terrain.bake.length).toFixed(3) }; })() : null,
+  propMeshes: props ? props.group.children.map((m) => `${m.name}x${m.count}`) : [],
+  mountainsPinned: scenery.mountains?.userData.pinned,
+});
 canvas.addEventListener('pointerdown', (e) => { if (!inXR) { preview.drag = true; preview.lastX = e.clientX; preview.lastY = e.clientY; } });
 window.addEventListener('pointerup', () => { preview.drag = false; });
 window.addEventListener('pointermove', (e) => {

@@ -160,6 +160,41 @@ board with its nose up is riding its tail.
 Measured terminal speeds land at 65 km/h on 10°, 99 on 20° and 123 on 30°, against literature
 values of roughly 60 / 95 / 115. Background and sources are in `docs/research.md`.
 
+## The maps
+
+Six, all generated deterministically by `npm run gen-maps`, so editing one and wanting the
+original back is one command away.
+
+| | drop | avg | steepest | what it is |
+|---|---|---|---|---|
+| First Tracks | 89 m | 6&deg; | 29&deg; | a green groomer to learn the board on |
+| Glade Run | 216 m | 13&deg; | 46&deg; | blue, trees, a kicker mid-run |
+| Ridge Line | 325 m | 18&deg; | 67&deg; | a cliff band, a mogul field, then a rock chute |
+| Cornice | 375 m | 23&deg; | 73&deg; | one very big jump, and a fast tail |
+| Spine Line | 355 m | 21&deg; | 60&deg; | a knife-edge spine with both sides falling away |
+| Couloir | 391 m | 24&deg; | 61&deg; | a rock-walled chute that never opens up |
+
+**Cornice** exists for its jump and everything else on it serves that. The run-in is long and
+steep to set your speed, then stands up and goes dead flat for the last seventy metres so the lip
+is the only thing that kicks you. Measured off it:
+
+| approach | air | height above the snow |
+|---|---|---|
+| 60 km/h | 2.8 s | 9 m |
+| 90 km/h | 3.6 s | 15 m |
+| 105 km/h | 4.2 s | 19 m |
+
+The landing is the part that took the work. A take-off angle decides how long you are in the air,
+but the landing slope decides how hard you arrive: touch down on ground steeper than your flight
+path and you land along it, touch down on anything flatter and the whole of your fall speed goes
+into the snow at once. The ramp steepens to 41&deg; to stay under the arc, which is why the landing
+impact barely moves between 60 and 105 km/h of approach.
+
+Two things worth knowing if you build your own. A kicker only kicks if the ground under it is
+still flat: put the steepening where the lip is and the terrain swallows the ramp, leaving a
+roll-over that throws you nowhere. And never run a smoothing pass over a take-off, because it
+rounds off the exact edge you are trying to leave from.
+
 ## Editor
 
 `http://localhost:8080/editor/` — sculpt with Raise / Lower / Smooth / Flatten / Reset / Roughen /

@@ -124,23 +124,32 @@ function run(name, player, { seconds = 150, startAt = null, startKmh = null, rea
   if (startKmh != null) r.vel.set(Math.sin(r.yaw), 0, Math.cos(r.yaw)).multiplyScalar(startKmh / 3.6);
 
   const dt = 1 / 120, rows = [];
-  let maxSpeed = 0, maxG = 0, air = 0, t = 0;
+  let maxSpeed = 0, maxG = 0, air = 0, t = 0, thisAir = 0, longestAir = 0;
   const events = [];
-  let prevX = sx, prevZ = sz, walls = 0;
+  let prevX = sx, prevZ = sz, walls = 0, hits = 0, lastHit = null, lastHitAt = -9;
 
   for (let i = 0; i < seconds * 120; i++) {
     t = i * dt;
     r.step(dt, player(r), null, 0, HEAD);
     if (r.lastEvent) {
       events.push({ t: +t.toFixed(2), ...r.lastEvent });
-      if (r.lastEvent.type === 'crash') break;
     }
     const bb = bounds(map), p = r.boardPos;
     if (p.x < bb.minX + 2.5) { r.pos.x += (bb.minX + 2.5) - p.x; r.vel.x = Math.abs(r.vel.x) * 0.3; walls++; }
     if (p.x > bb.maxX - 2.5) { r.pos.x -= p.x - (bb.maxX - 2.5); r.vel.x = -Math.abs(r.vel.x) * 0.3; walls++; }
-    if (r.speed > 3.5) {
+    // Match the game: hitting something solid stops you dead and shoves you clear, it does not
+    // end the run. A harness that ends the run instead reports "unrideable" for a map you would
+    // actually finish, just slower and crosser.
+    {
       const hit = hardProps.find((q) => Math.hypot(q.x - p.x, q.z - p.z) < q.r);
-      if (hit) { events.push({ t: +t.toFixed(2), type: 'crash', kind: hit.t, speed: +r.speed.toFixed(1) }); break; }
+      if (hit && (hit !== lastHit || t - lastHitAt > 0.4)) {
+        if (r.speed > 3.5) events.push({ t: +t.toFixed(2), type: 'hit', kind: hit.t, speed: +r.speed.toFixed(1) });
+        const d = Math.hypot(hit.x - p.x, hit.z - p.z) || 1;
+        r.pos.x -= ((hit.x - p.x) / d) * (hit.r + 0.35 - d);
+        r.pos.z -= ((hit.z - p.z) / d) * (hit.r + 0.35 - d);
+        r.vel.multiplyScalar(0.12);
+        lastHit = hit; lastHitAt = t; hits++;
+      }
     }
     for (const g of gateList) {
       if (g.passed || g.missed) continue;
@@ -155,7 +164,7 @@ function run(name, player, { seconds = 150, startAt = null, startKmh = null, rea
     }
     prevX = p.x; prevZ = p.z;
     maxSpeed = Math.max(maxSpeed, r.speed); maxG = Math.max(maxG, Math.abs(r.lateralG));
-    if (!r.grounded) air += dt;
+    if (!r.grounded) { air += dt; thisAir += dt; if (thisAir > longestAir) longestAir = thisAir; } else thisAir = 0;
     if (i % Math.round(120 * rowSecs) === 0) {
       rows.push({
         t: t.toFixed(0), x: p.x.toFixed(1), z: p.z.toFixed(1), kmh: (r.speed * 3.6).toFixed(0),
@@ -169,10 +178,10 @@ function run(name, player, { seconds = 150, startAt = null, startKmh = null, rea
   console.log(`\n=== ${name} on ${map.name} ===`);
   console.table(rows);
   const passed = gateList.filter((g) => g.passed).length, missed = gateList.filter((g) => g.missed).length;
-  console.log(`max ${(maxSpeed * 3.6).toFixed(0)} km/h, max ${maxG.toFixed(2)} g, air ${air.toFixed(1)} s, end z ${r.boardPos.z.toFixed(0)} m at t=${t.toFixed(1)} s, gates ${passed}/${gateList.length} (missed ${missed})`);
+  console.log(`max ${(maxSpeed * 3.6).toFixed(0)} km/h, max ${maxG.toFixed(2)} g, air ${air.toFixed(1)} s, longest air ${longestAir.toFixed(2)} s, ${hits} hit(s), end z ${r.boardPos.z.toFixed(0)} m at t=${t.toFixed(1)} s, gates ${passed}/${gateList.length} (missed ${missed})`);
   const shown = events.filter((e) => e.type !== 'land').slice(0, 12);
   if (shown.length) console.log('events:', JSON.stringify(shown), walls ? `+${walls} wall bumps` : '');
-  return { maxSpeed, maxG, air, events, endZ: r.boardPos.z, t, passed, missed };
+  return { maxSpeed, maxG, air, longestAir, hits, events, endZ: r.boardPos.z, t, passed, missed };
 }
 
 const scenarios = {

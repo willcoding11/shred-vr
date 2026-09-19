@@ -535,7 +535,265 @@ function ridgeLine() {
   return map;
 }
 
-const maps = [firstTracks(), gladeRun(), ridgeLine()];
+// ---------------- MAP 4: Cornice (black) ----------------
+// Built around one jump and nothing else. Everything above the lip exists to set the approach
+// speed, and everything below it exists to catch you.
+//
+// The landing is the part that matters. A take-off angle decides how long you are in the air,
+// but it is the LANDING SLOPE that decides how hard you arrive: touch down on ground steeper
+// than your flight path and you land along it, touch down on anything flatter and the whole of
+// your fall speed goes into the snow at once. So the ramp under this is long, steep, and set to
+// stay under the arc rather than to look dramatic.
+function cornice() {
+  const map = createMap({ id: 'cornice', name: 'Cornice', w: 112, h: 440, spacing: 2, slopeDeg: 24, h0: 0, difficulty: 'black' });
+  map.description = 'A long run-in to one very big jump, then a fast tail with two smaller hits.';
+  map.order = 4;
+  const rand = rnd(91);
+  const LIP = 300;
+
+  const center = (z) => (
+    z < 90 ? 0
+      : z < 250 ? Math.sin(((z - 90) / 160) * Math.PI) * 13
+        : z < 520 ? 0
+          : Math.sin(((z - 520) / 150) * Math.PI) * 15);
+
+  pitchProfile(map, (z) => (
+    z < 26 ? 7
+      : z < 80 ? 7 + ((z - 26) / 54) * 21                     // roll into the face
+        : z < 210 ? 28                                        // steep: this is where the speed comes from
+          : z < 268 ? 28 - ((z - 210) / 58) * 12              // stand it up for the run-in
+            : z < 332 ? 16                                    // run-in stays FLAT past the lip crest
+              : z < 374 ? 34                                  // the gap opens under the arc
+                : z < 434 ? 41                                // landing, steepening to meet the arc
+                  : z < 488 ? 41 - ((z - 434) / 54) * 21      // knuckle out
+                    : z < 640 ? 20
+                      : z < 760 ? 24
+                        : z < 812 ? 16
+                          : z < 852 ? 16 - ((z - 812) / 40) * 9
+                            : 7), { smoothM: 8 });
+
+  shapeValley(map, {
+    floorHalf: (z) => (z < 70 ? 34 : z < 250 ? 20 : z < 490 ? 46 : 32),
+    wallH: 12, wallRun: 32, pow: 1.9, outerGrade: 0.26, centerFn: center,
+  });
+
+  // Rollers on the upper face only. The run-in is left deliberately smooth: a bump in the last
+  // fifty metres is the difference between leaving the lip flat and leaving it sideways.
+  addRollers(map, { z0: 100, z1: 200, wavelength: 44, amp: 1.4 });
+  addNoise(map, { amp: 0.65, scale: 0.02, oct: 4, seed: 5.1, mask: (x, z) => (z > 262 && z < 420 ? 0.15 : 1) });
+  addNoise(map, { amp: 0.22, scale: 0.07, oct: 2, seed: 2.4, mask: (x, z) => (z > 262 && z < 420 ? 0.2 : 1) });
+
+  // The lip. Wide enough that you do not have to thread it, and shallow-angled for its size --
+  // a big ramp at a modest angle is far more forgiving than a small one that flicks you.
+  kicker(map, 0, LIP, { radius: 19, height: 6.0 });
+  // Shoulders, so the take-off reads as part of the mountain rather than a ramp dropped on it.
+  kicker(map, -26, LIP - 3, { radius: 13, height: 2.2 });
+  kicker(map, 26, LIP - 3, { radius: 13, height: 2.2 });
+
+  // Two smaller hits down the tail, for when you want the air without the commitment.
+  kicker(map, center(566), 566, { radius: 11, height: 2.1 });
+  kicker(map, center(690), 690, { radius: 12, height: 2.4 });
+
+  // Smooth the LANDING, and never the lip. A couple of passes across a take-off rounds off the
+  // very edge you are trying to leave from, and a rounded lip is a roll-over rather than a jump.
+  smoothAll(map, 2, (x, z) => (z > 344 && z < 476 ? 1 : 0));
+
+  treeLine(map, rand, { side: -1, z0: 60, z1: 250, spacing: 10, inset: 20, insetVar: 10, cx: center });
+  treeLine(map, rand, { side: 1, z0: 60, z1: 250, spacing: 10, inset: 20, insetVar: 10, cx: center });
+  // Nothing at all within the landing: it is the one place on the map you cannot choose your line.
+  glade(map, rand, { z0: 492, z1: 800, cx: center, halfWidth: 86, inner: 54, density: 0.005, minGap: 9, types: ['fir', 'pine'] });
+  for (const [rx, rz] of [[-62, 366], [64, 388], [-66, 412], [60, 440]]) place(map, 'rock', rx, rz, { s: 1.5 + rand() * 0.5, r: rand() * 3 });
+
+  // Flag the lip so it is visible from the top of the run-in, and the knuckle so you know where
+  // the landing stops being a landing.
+  for (const x of [-30, -22, 22, 30]) place(map, 'flag', x, LIP - 16);
+  place(map, 'sign', -34, LIP - 26, { r: Math.PI });
+  place(map, 'sign', 34, LIP - 26, { r: Math.PI });
+  for (const x of [-38, 38]) for (let z = 434; z <= 470; z += 18) place(map, 'flag', x, z);
+
+  gates(map, [
+    ...slalomLine({ z0: 104, zEnd: 206, swing0: 11, swing1: 14, targetR: 62, cx: center, startSide: -1 }),
+    [0, 268],                                                  // line up straight for the lip
+    [0, 456],                                                  // and through the landing
+    ...slalomLine({ z0: 524, zEnd: 756, swing0: 12, swing1: 15, targetR: 58, cx: center, startSide: 1 }),
+  ]);
+  finish(map, 852, 60);                      // the landing dumps you out wide, so the line is wide
+  startArea(map, { z: 10, x: 0, width: 22 });
+  finishArea(map, { z: 852, x: 0, w: 60 });
+  pruneSteepProps(map);
+  return map;
+}
+
+// ---------------- MAP 5: Spine Line (black) ----------------
+// The inverse of every other map here: instead of a valley whose walls hold you in, a ridge
+// whose sides fall away. Nothing catches a mistake, so the whole run is about staying on a line
+// about as wide as a road.
+function spineLine() {
+  const map = createMap({ id: 'spine-line', name: 'Spine Line', w: 112, h: 470, spacing: 2, slopeDeg: 23, h0: 0, difficulty: 'black' });
+  map.description = 'A knife-edge spine with both sides falling away, into a tight chute and a bowl.';
+  map.order = 5;
+  const rand = rnd(53);
+
+  const spine = (z) => (
+    z < 80 ? 0
+      : z < 430 ? Math.sin(((z - 80) / 175) * Math.PI) * 22
+        : z < 660 ? Math.sin(((z - 430) / 230) * Math.PI) * -16
+          : 0);
+
+  pitchProfile(map, (z) => (
+    z < 26 ? 7
+      : z < 74 ? 7 + ((z - 26) / 48) * 17
+        : z < 430 ? 24                                         // the spine itself
+          : z < 520 ? 30                                       // steepens into the chute
+            : z < 660 ? 27                                     // chute
+              : z < 760 ? 19                                   // bowl
+                : z < 860 ? 13
+                  : z < 904 ? 14 - ((z - 860) / 44) * 7
+                    : 6), { smoothM: 16 });
+
+  // A NEGATIVE wall height inverts shapeValley: the ground falls away from the centreline
+  // instead of rising to it. That single sign is the whole character of this map.
+  shapeValley(map, {
+    floorHalf: (z) => (z < 70 ? 30 : z < 400 ? 9 : z < 440 ? 9 + ((z - 400) / 40) * 5 : z < 660 ? 11 : 40),
+    wallH: (0), wallRun: 30, pow: 1.9, outerGrade: 0.0, centerFn: spine,
+  });
+  // the spine's fall-away, applied only where the spine actually runs
+  {
+    const { w, h } = map.size, sp = map.spacing;
+    for (let z = 0; z < h; z++) {
+      const wz = z * sp;
+      if (wz < 70 || wz > 668) continue;
+      const env = Math.min(1, (wz - 70) / 40, (668 - wz) / 40);
+      const halfAt = wz < 400 ? 9 : wz < 440 ? 9 + ((wz - 400) / 40) * 5 : 11;
+      for (let x = 0; x < w; x++) {
+        const [wx] = gridToWorld(map, x, z);
+        const d = Math.abs(wx - spine(wz)) - halfAt;
+        if (d <= 0) continue;
+        const t = Math.min(1, d / 26);
+        let dy = -Math.pow(t, 1.7) * 15 * env;
+        if (d > 26) dy -= (d - 26) * 0.30 * env;
+        map.heights[z * w + x] += dy;
+      }
+    }
+  }
+  // and a rim beyond the fall-away, so the map edge is still unmistakable
+  shapeValley(map, { floorHalf: 78, wallH: 16, wallRun: 24, pow: 1.6, outerGrade: 0.34 });
+  // The bowl has to funnel. Left as a 40 m-wide floor it let riders drift out to the side and
+  // finish past the end of the banner, which reads as the map being broken rather than as a
+  // missed line. It narrows steadily from the chute exit down to the finish.
+  shapeValley(map, {
+    floorHalf: (z) => (z < 690 ? 90 : z < 900 ? 90 - ((z - 690) / 210) * 62 : 28),
+    wallH: 7, wallRun: 26, pow: 1.7, outerGrade: 0.18,
+  });
+
+  addRollers(map, { z0: 110, z1: 400, wavelength: 52, amp: 1.1 });
+  addCamber(map, { z0: 100, z1: 420, wavelength: 170, amp: 1.1, reach: 12, centerFn: spine });
+  addNoise(map, { amp: 0.55, scale: 0.025, oct: 4, seed: 8.8 });
+  addNoise(map, { amp: 0.2, scale: 0.08, oct: 2, seed: 1.7 });
+
+  // moguls in the bowl, where there is finally room to make mistakes
+  for (let row = 0; row * 9.5 < 100; row++) {
+    const z = 676 + row * 9.5;
+    for (let col = -5; col <= 5; col++) {
+      const px = col * 6.5 + (row % 2 ? 3.2 : 0) + (rand() - 0.5) * 3;
+      const pz = z + (rand() - 0.5) * 3;
+      if (rand() < Math.max(0, (Math.abs(px) / 34 - 0.6) / 0.4)) continue;
+      applyBrush(map, { tool: 'raise', x: px, z: pz, radius: 4.2 + rand() * 1.6, strength: 1, dt: 0.065 + rand() * 0.04, falloff: 0.05 });
+    }
+  }
+  smoothAll(map, 1, (x, z) => (z > 430 && z < 670 ? 1 : 0));
+
+  // Trees below the spine on both sides, so the drop reads as a drop rather than as open snow.
+  glade(map, rand, { z0: 100, z1: 420, cx: spine, halfWidth: 74, inner: 34, density: 0.006, minGap: 8, types: ['fir', 'pine'] });
+  glade(map, rand, { z0: 690, z1: 860, halfWidth: 82, inner: 52, density: 0.004, minGap: 10, types: ['fir', 'birch'] });
+  for (let z = 100; z < 420; z += 19) {
+    for (const side of [-1, 1]) place(map, rand() < 0.6 ? 'rock' : 'boulder', spine(z) + side * (16 + rand() * 6), z, { s: 0.9 + rand() * 0.6, r: rand() * 3 });
+  }
+  for (let z = 452; z < 640; z += 16) {
+    for (const side of [-1, 1]) place(map, 'boulder', spine(z) + side * (17 + rand() * 5), z, { s: 1 + rand() * 0.6, r: rand() * 3 });
+  }
+  for (let z = 120; z < 420; z += 26) { place(map, 'flag', spine(z) - 7, z); place(map, 'flag', spine(z) + 7, z); }
+  place(map, 'sign', 26, 86, { r: Math.PI });
+
+  gates(map, [
+    [+spine(140).toFixed(2), 140], [+spine(214).toFixed(2), 214], [+spine(290).toFixed(2), 290],
+    [+spine(366).toFixed(2), 366], [+spine(470).toFixed(2), 470], [+spine(560).toFixed(2), 560],
+    [+spine(640).toFixed(2), 640],
+    ...slalomLine({ z0: 700, zEnd: 844, swing0: 11, swing1: 14, targetR: 54, startSide: -1 }),
+  ]);
+  finish(map, 904, 64);                      // the bowl is still funnelling here
+  startArea(map, { z: 10, x: 0, width: 20 });
+  finishArea(map, { z: 904, x: 0, w: 64 });
+  pruneSteepProps(map);
+  return map;
+}
+
+// ---------------- MAP 6: Couloir (black) ----------------
+// Narrow, steep and relentless. There is no wide line anywhere on it: the floor is barely two
+// board-lengths across for most of the run, so every turn has to be finished.
+function couloir() {
+  const map = createMap({ id: 'couloir', name: 'Couloir', w: 96, h: 450, spacing: 2, slopeDeg: 26, h0: 0, difficulty: 'black' });
+  map.description = 'A rock-walled chute that never opens up, with an ice band halfway and a sudden apron at the bottom.';
+  map.order = 6;
+  const rand = rnd(17);
+  map.env = { ...map.env, snowType: 'ice', timeOfDay: 0.22, fog: 0.4 };
+
+  const cx = (z) => (
+    z < 70 ? 0
+      : z < 300 ? Math.sin(((z - 70) / 115) * Math.PI) * 11
+        : z < 560 ? Math.sin(((z - 300) / 130) * Math.PI) * -13
+          : z < 720 ? Math.sin(((z - 560) / 160) * Math.PI) * 9
+            : 0);
+
+  pitchProfile(map, (z) => (
+    z < 24 ? 7
+      : z < 72 ? 7 + ((z - 24) / 48) * 20
+        : z < 300 ? 27
+          : z < 366 ? 33                                       // the ice band: steepest part
+            : z < 560 ? 28
+              : z < 700 ? 25
+                : z < 770 ? 16                                 // the apron
+                  : z < 836 ? 16 - ((z - 770) / 66) * 9
+                    : 6), { smoothM: 14 });
+
+  shapeValley(map, {
+    floorHalf: (z) => (z < 64 ? 30 : z < 100 ? 30 - ((z - 64) / 36) * 16 : z < 690 ? 14 : z < 740 ? 14 + ((z - 690) / 50) * 32 : 46),
+    wallH: 20, wallRun: 24, pow: 1.5, outerGrade: 0.42, centerFn: cx,
+  });
+
+  addRollers(map, { z0: 110, z1: 290, wavelength: 38, amp: 1.0 });
+  addRollers(map, { z0: 380, z1: 550, wavelength: 34, amp: 0.9 });
+  addNoise(map, { amp: 0.5, scale: 0.03, oct: 4, seed: 4.4, mask: (x, z) => (z > 300 && z < 366 ? 0.2 : 1) });
+  addNoise(map, { amp: 0.18, scale: 0.09, oct: 2, seed: 9.1 });
+  smoothAll(map, 2, (x, z) => (z > 296 && z < 372 ? 1 : 0));   // the ice band is scoured smooth
+
+  // Rock walls the whole way down, close in. These are the couloir.
+  for (let z = 96; z < 700; z += 9 + rand() * 5) {
+    const c = cx(z), half = 14.5 + fbm(z * 0.06 + 3.1, 1.7, 2) * 1.6;
+    for (const side of [-1, 1]) {
+      place(map, rand() < 0.45 ? 'boulder' : 'rock', c + side * (half + 3 + rand() * 4), z, { s: 1 + rand() * 0.8, r: rand() * 3 });
+      if (rand() < 0.4) place(map, 'rock', c + side * (half + 11 + rand() * 8), z + rand() * 5, { s: 1.3 + rand() * 0.7, r: rand() * 3 });
+    }
+  }
+  glade(map, rand, { z0: 600, z1: 830, cx, halfWidth: 78, inner: 40, density: 0.005, minGap: 9, types: ['fir', 'pine'] });
+  for (let z = 120; z < 680; z += 34) { place(map, 'flag', cx(z) - 11, z); place(map, 'flag', cx(z) + 11, z); }
+  place(map, 'sign', 22, 80, { r: Math.PI });
+  place(map, 'sign', -22, 296, { r: Math.PI });
+
+  gates(map, [
+    [+cx(130).toFixed(2), 130], [+cx(200).toFixed(2), 200], [+cx(268).toFixed(2), 268],
+    [+cx(340).toFixed(2), 340], [+cx(420).toFixed(2), 420], [+cx(500).toFixed(2), 500],
+    [+cx(590).toFixed(2), 590], [+cx(668).toFixed(2), 668],
+    ...slalomLine({ z0: 716, zEnd: 812, swing0: 10, swing1: 13, targetR: 50, startSide: 1 }),
+  ]);
+  finish(map, 836, 78);                      // the apron fans out, and a hot exit fans out with it
+  startArea(map, { z: 10, x: 0, width: 18 });
+  finishArea(map, { z: 836, x: 0, w: 78 });
+  pruneSteepProps(map);
+  return map;
+}
+
+const maps = [firstTracks(), gladeRun(), ridgeLine(), cornice(), spineLine(), couloir()];
 for (const m of maps) {
   fs.writeFileSync(path.join(MAPS, `${m.id}.json`), JSON.stringify(serializeMap(m)));
   const s = mapStats(m);

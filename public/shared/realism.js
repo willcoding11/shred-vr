@@ -44,7 +44,9 @@ float fbm(vec2 p){
 }
 
 void main(){
-  vec3 d = normalize(vDir);
+  // Normalise HERE, not in the vertex shader. Interpolating a per-vertex normalised direction
+  // across a 64x32 sphere turns the sun into a faceted vertical capsule.
+  vec3 d = normalize(vWorld - cameraPosition);
   float h = clamp(d.y, -0.15, 1.0);
   float elev = clamp(sunDir.y, -0.1, 1.0);          // how high the sun is, 0 at the horizon
   float day = smoothstep(-0.02, 0.32, elev);        // 0 at dawn, 1 in the middle of the day
@@ -77,15 +79,18 @@ void main(){
 
   // the sun itself
   float ang = acos(clamp(c, -1.0, 1.0));
-  float disc = 1.0 - smoothstep(0.0040 * sunSize, 0.0056 * sunSize, ang);
-  float glow = exp(-ang * 26.0) * 0.55;
-  col += sunColor * (disc * 12.0 + glow) * (0.35 + 0.65 * day);
+  float disc = 1.0 - smoothstep(0.0043 * sunSize, 0.0058 * sunSize, ang);
+  float glow = exp(-ang * 19.0) * 0.30 + exp(-ang * 3.2) * 0.05;
+  // The disc stays well clear of the halo so the tone curve does not fuse them into one blob.
+  col += sunColor * (disc * 5.2 + glow) * (0.35 + 0.65 * day);
 
   // a thin high cloud deck, drifting
   if (cloud > 0.001 && d.y > 0.015) {
-    vec2 uv = d.xz / max(d.y, 0.07) * 0.085 + vec2(time * 0.0014, time * 0.0008);
-    float n = fbm(uv * 1.6);
-    float cover = smoothstep(0.54 - cloud * 0.24, 0.80, n) * smoothstep(0.015, 0.20, d.y);
+    // Project onto a dome rather than an infinite plane. Dividing by d.y collapses the domain
+    // to a speck at the zenith, which is why there was never any cloud overhead.
+    vec2 uv = normalize(vec2(d.x, d.z)) * (1.0 - d.y * 0.72) * 2.3 + vec2(time * 0.0045, time * 0.0026);
+    float n = fbm(uv * 1.35);
+    float cover = smoothstep(0.62 - cloud * 0.34, 0.86, n) * smoothstep(0.015, 0.16, d.y);
     // lit from the sun's side, shaded away from it
     float side = clamp(dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(sunDir.x, 0.0, sunDir.z))) * 0.5 + 0.5, 0.0, 1.0);
     vec3 lit = mix(vec3(0.58, 0.62, 0.70), mix(vec3(1.0, 0.80, 0.62), vec3(1.0, 0.99, 0.97), day), side);
@@ -93,7 +98,7 @@ void main(){
   }
 
   // haze band at the horizon so it does not end in a line
-  col = mix(col, mix(vec3(0.80, 0.68, 0.58), vec3(0.84, 0.88, 0.93), day), smoothstep(0.04, -0.12, d.y) * 0.92);
+  col = mix(col, mix(vec3(0.80, 0.68, 0.58), vec3(0.84, 0.88, 0.93), day), smoothstep(0.16, -0.14, d.y) * 0.88);
 
   col *= exposure;
   gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -117,7 +122,7 @@ export function snowNormalMap(size = 512) {
   }
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const dx = h(x + 1, y) - h(x - 1, y), dy = h(x, y + 1) - h(x, y - 1);
-    const nx = -dx * 0.06, ny = -dy * 0.06, nz = 1;
+    const nx = -dx * 0.55, ny = -dy * 0.55, nz = 1;   // 0.06 then scaled again by 0.55 was a flat map
     const l = Math.hypot(nx, ny, nz), i = (y * size + x) * 4;
     d[i] = (nx / l * 0.5 + 0.5) * 255; d[i + 1] = (ny / l * 0.5 + 0.5) * 255;
     d[i + 2] = (nz / l * 0.5 + 0.5) * 255; d[i + 3] = 255;
@@ -156,28 +161,38 @@ varying vec3 vRealWorld;
 varying vec3 vRealNormal;
 uniform float uSparkle; uniform float uSubsurface; uniform vec3 uSunDir; uniform vec3 uSkyTint;
 float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
-      .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
 {
   vec3 V = normalize(cameraPosition - vRealWorld);
   vec3 N = normalize(vRealNormal);
+  float dist = length(cameraPosition - vRealWorld);
   // Subsurface: snow that is facing away from the sun is not dark, it is blue. The wrap term is
   // the cheap stand-in for light that went in somewhere else and came back out here.
   float wrap = clamp((dot(N, uSunDir) + 0.55) / 1.55, 0.0, 1.0);
   float ao = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  gl_FragColor.rgb += uSkyTint * uSubsurface * 0.16 * (1.0 - wrap) * ao;
+  reflectedLight.indirectDiffuse += uSkyTint * uSubsurface * 0.62 * (1.0 - wrap) * ao;
   // and a touch of forward scatter when you are looking toward the sun across the surface
   float fwd = pow(clamp(dot(V, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 6.0);
-  gl_FragColor.rgb += vec3(0.9, 0.93, 1.0) * uSubsurface * 0.07 * fwd;
+  reflectedLight.indirectDiffuse += vec3(0.9, 0.93, 1.0) * uSubsurface * 0.22 * fwd;
 
   // Sparkle: pick out the handful of crystals per patch that are aimed at you.
-  vec3 cell = floor(vRealWorld * 34.0);
-  float r1 = rhash(cell), r2 = rhash(cell + 7.1), r3 = rhash(cell + 19.3);
-  vec3 facet = normalize(N + (vec3(r1, r2, r3) - 0.5) * 1.9);
-  vec3 H = normalize(uSunDir + V);
-  float spec = pow(max(dot(facet, H), 0.0), 420.0);
-  float rare = step(0.86, r3);
-  float grazing = smoothstep(0.0, 0.35, dot(N, uSunDir));
-  gl_FragColor.rgb += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * 2.6;
+  //
+  // Glitter, not stipple. Fixed 2.9 cm cells with no distance term aliased into a regular
+  // diagonal lattice lying on the slope -- a net thrown over the snow rather than light coming
+  // off it. The cells now grow with distance so they stay above a pixel, and the whole term is
+  // gone by 30 m, where individual crystals are not resolvable anyway.
+  float near = 1.0 - smoothstep(6.0, 30.0, dist);
+  if (near > 0.001) {
+    float cellSize = 34.0 / (1.0 + dist * 0.55);
+    vec3 cell = floor(vRealWorld * cellSize);
+    float r1 = rhash(cell), r2 = rhash(cell + 7.1), r3 = rhash(cell + 19.3);
+    vec3 facet = normalize(N + (vec3(r1, r2, r3) - 0.5) * 1.9);
+    vec3 H = normalize(uSunDir + V);
+    float spec = pow(max(dot(facet, H), 0.0), 520.0);
+    float rare = step(0.90, r3);
+    float grazing = smoothstep(0.0, 0.35, dot(N, uSunDir));
+    reflectedLight.directSpecular += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * near * 9.0;
+  }
 }`);
   };
   mat.needsUpdate = true;
@@ -188,14 +203,15 @@ float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 4
 // Conifers built as a trunk plus many thin drooping tiers rather than three stacked cones. The
 // silhouette is the whole thing at a distance: a real spruce is a ragged spike, not a party hat.
 function tierGeo(r, hh, droop, seg) {
-  const g = new THREE.ConeGeometry(r, hh, seg, 1, true);
+  // Closed, not open-ended: single-sided open cones vanish when you look up through the canopy.
+  const g = new THREE.ConeGeometry(r, hh, seg, 1, false);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const y = p.getY(i);
     if (y < 0) {                                   // the skirt of each tier bends down and out
       const x = p.getX(i), z = p.getZ(i);
-      const k = 1 + droop * 0.35;
-      p.setXYZ(i, x * k, y - droop * 0.55 * hh, z * k);
+      const k = 1 + droop * 0.18;
+      p.setXYZ(i, x * k, y - droop * 0.30 * hh, z * k);
     }
   }
   g.computeVertexNormals();
@@ -216,14 +232,17 @@ export function realConifer({ height = 9, rand = Math.random, snowy = 0.7, dark 
   for (let i = 0; i < tiers; i++) {
     const t = i / (tiers - 1);
     const y = height * (0.16 + t * 0.80);
-    const r = height * (0.30 * Math.pow(1 - t, 1.25) + 0.025) * (0.86 + rand() * 0.28);
+    const r = height * (0.185 * Math.pow(1 - t, 1.25) + 0.022) * (0.84 + rand() * 0.32);
     const hh = height * (0.15 + 0.07 * (1 - t));
     const shade = dark ? (i % 2 ? '#1b4a32' : '#20573a') : (i % 2 ? '#26623c' : '#2c7046');
     const g = col(tierGeo(r, hh, 0.5 + rand() * 0.5, 7), shade).translate((rand() - 0.5) * r * 0.12, y, (rand() - 0.5) * r * 0.12);
     parts.push(g);
     // snow sitting on the upper side of the branches
+    // Snow load, offset to one side and only on some tiers, because it does not sit evenly.
     if (rand() < snowy) {
-      parts.push(col(tierGeo(r * 0.82, hh * 0.30, 0.3, 7), '#f2f6ff').translate(0, y + hh * 0.30, 0));
+      const off = r * 0.16;
+      parts.push(col(tierGeo(r * (0.55 + rand() * 0.22), hh * 0.24, 0.2, 7), '#eef4ff')
+        .translate((rand() - 0.5) * off * 2, y + hh * 0.26, (rand() - 0.5) * off * 2));
     }
   }
   // a bare leader at the very top

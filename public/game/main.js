@@ -38,7 +38,7 @@ renderer.xr.setFoveation(1);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
 const rig = new THREE.Group(); rig.name = 'rig'; rig.add(camera); scene.add(rig);
-const scenery = new Scenery(scene, { shadows: settings.shadows, quality: settings.quality });
+const scenery = new Scenery(scene, { shadows: settings.shadows, quality: settings.quality, renderer });
 const vignette = new Vignette(camera);
 const audio = new GameAudio();
 const hud = new Hud();
@@ -299,8 +299,12 @@ bindSetting('setQuality', 'quality', (v) => v, (v) => v, applyQuality);
 // that sparkles and scatters under its own surface, denser trees and a bigger shadow map.
 function applyQuality() {
   const real = settings.quality === 'real';
-  renderer.toneMapping = real ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
-  renderer.toneMappingExposure = real ? 1.35 : 1.0;
+  // ACES on BOTH. Turning it off for Fast clipped highlights harder than the game did before this
+  // setting existed, which made choosing "Fast" a regression. And 1.35 on Real was not realism,
+  // it was the brightness turned up: it blew the piste to featureless white and the Fast image
+  // had more tonal shape in the snow than the Real one did.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = real ? 1.0 : 0.95;
   scenery.setQuality(settings.quality);
   if (terrain) {
     scene.remove(terrain.mesh); terrain.geometry.dispose(); terrain.material.dispose();
@@ -709,34 +713,134 @@ function updateDomHud(s) {
 }
 
 // ---------------- board mesh ----------------
+// The board. It is forty centimetres from your face for the entire game, so it is the one object
+// worth spending geometry on -- and it was a flat plank: no kick, no camber, no sidecut, a steel
+// edge made from a box that stuck out past the corners, the topsheet graphic mirrored onto the
+// base, and bindings that were two cubes.
+//
+// It is built here as a lofted surface: a length-wise profile that carries camber and kicked tip
+// and tail, crossed with a width profile that carries the sidecut. Everything else hangs off that.
 function buildBoard(group, length = 1.5) {
-  const shape = new THREE.Shape();
-  const L = length, W = 0.27, r = 0.13;
-  shape.moveTo(-W / 2 + r, -L / 2); shape.lineTo(W / 2 - r, -L / 2); shape.quadraticCurveTo(W / 2, -L / 2, W / 2, -L / 2 + r);
-  shape.lineTo(W / 2 - 0.012, L / 2 - r); shape.quadraticCurveTo(W / 2, L / 2, W / 2 - r, L / 2);
-  shape.lineTo(-W / 2 + r, L / 2); shape.quadraticCurveTo(-W / 2, L / 2, -W / 2 + 0.012, L / 2 - r);
-  shape.lineTo(-W / 2, -L / 2 + r); shape.quadraticCurveTo(-W / 2, -L / 2, -W / 2 + r, -L / 2);
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.022, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 2 });
-  geo.rotateX(-Math.PI / 2); geo.translate(0, -0.011, 0);
+  const L = length, WAIST = 0.248, TIP = 0.292, THICK = 0.0085;
+  const NOSE = 0.155, KICK = 0.055, CAMBER = 0.008;
+  const NZ = 34, NX = 9;                                    // sections along, points across
+
+  // half-width at t in -1..1 (tail..nose): sidecut through the middle, rounded off at the ends
+  const halfW = (t) => {
+    const a = Math.abs(t);
+    const contact = 1 - NOSE * 2 / L;
+    if (a <= contact) return (WAIST + (TIP - WAIST) * Math.pow(a / contact, 2)) / 2;
+    const u = (a - contact) / (1 - contact);
+    return (TIP / 2) * Math.sqrt(Math.max(0, 1 - u * u * 0.94));
+  };
+  // base height at t: camber in the middle, kick at both ends. This is the silhouette.
+  const baseY = (t) => {
+    const a = Math.abs(t);
+    const contact = 1 - NOSE * 2 / L;
+    if (a <= contact) return CAMBER * (1 - Math.pow(a / contact, 2));
+    const u = (a - contact) / (1 - contact);
+    return KICK * u * u;
+  };
+
+  const pos = [], nrm = [], uvs = [], idx = [];
+  const push = (x, y, z, u, v) => { pos.push(x, y, z); uvs.push(u, v); };
+  // two surfaces: base (down) and deck (up), joined at the rim
+  for (let s2 = 0; s2 < 2; s2++) {
+    const top = s2 === 1;
+    for (let i2 = 0; i2 <= NZ; i2++) {
+      const t = (i2 / NZ) * 2 - 1, z = t * L / 2, hw = halfW(t), y0 = baseY(t);
+      // the deck thins toward the tip and tail, the way a real board does
+      const th = THICK * (0.45 + 0.55 * Math.pow(1 - Math.abs(t), 0.5));
+      for (let k = 0; k <= NX; k++) {
+        const f = (k / NX) * 2 - 1;
+        const x = f * hw;
+        const dome = top ? th * (1 - f * f * 0.35) : 0;
+        push(x, y0 + dome, z, f * 0.5 + 0.5, i2 / NZ);
+      }
+    }
+  }
+  const ring = NX + 1, sheet = (NZ + 1) * ring;
+  for (let s2 = 0; s2 < 2; s2++) for (let i2 = 0; i2 < NZ; i2++) for (let k = 0; k < NX; k++) {
+    const o = s2 * sheet + i2 * ring + k;
+    if (s2 === 1) idx.push(o, o + 1, o + ring, o + 1, o + ring + 1, o + ring);
+    else idx.push(o, o + ring, o + 1, o + 1, o + ring, o + ring + 1);
+  }
+  // the rim, closing base to deck down both sides
+  for (let i2 = 0; i2 < NZ; i2++) for (const k of [0, NX]) {
+    const b = i2 * ring + k, d = sheet + i2 * ring + k;
+    if (k === 0) idx.push(b, d, b + ring, b + ring, d, d + ring);
+    else idx.push(b, b + ring, d, b + ring, d + ring, d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+
+  // ---- topsheet, and a base that is not the topsheet upside down ----
   const c = document.createElement('canvas'); c.width = 256; c.height = 1024; const g = c.getContext('2d');
   const grad = g.createLinearGradient(0, 0, 0, 1024);
   grad.addColorStop(0, '#0ea5e9'); grad.addColorStop(0.5, '#1e293b'); grad.addColorStop(1, '#f472b6');
   g.fillStyle = grad; g.fillRect(0, 0, 256, 1024);
   g.fillStyle = 'rgba(255,255,255,0.9)'; g.font = '800 120px Inter, system-ui, sans-serif'; g.textAlign = 'center';
   g.save(); g.translate(128, 512); g.rotate(-Math.PI / 2); g.fillText('SHRED', 0, 40); g.restore();
-  for (let i = 0; i < 12; i++) { g.fillStyle = `rgba(255,255,255,${0.05 + (i % 3) * 0.04})`; g.fillRect(0, 60 + i * 80, 256, 6); }
+  for (let i2 = 0; i2 < 12; i2++) { g.fillStyle = `rgba(255,255,255,${0.05 + (i2 % 3) * 0.04})`; g.fillRect(0, 60 + i2 * 80, 256, 6); }
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-  const uv = geo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / W + 0.5, uv.getY(i) / L + 0.5);
-  const deck = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.35, metalness: 0.1 }));
+
+  geo.clearGroups();
+  geo.addGroup(0, sheet * 0 + NZ * NX * 6, 1);                     // base
+  geo.addGroup(NZ * NX * 6, geo.index.count - NZ * NX * 6, 0);     // deck and rim
+  const deckMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.28, metalness: 0.15, envMapIntensity: 1.2 });
+  // sintered base: near-black, semi-gloss, and nothing like the graphic on the other side
+  const baseMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.42, metalness: 0.05, envMapIntensity: 0.9 });
+  const deck = new THREE.Mesh(geo, [deckMat, baseMat]);
   deck.castShadow = true; group.add(deck);
-  const edge = new THREE.Mesh(new THREE.BoxGeometry(W + 0.006, 0.006, L + 0.006),
-    new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.6, roughness: 0.4 }));
-  edge.position.y = -0.008; group.add(edge);
-  // bindings sit where your hands are: at +/- a third of the board
-  for (const z of [length * 0.2, -length * 0.2]) {
-    const b = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.03, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.6 }));
-    b.position.set(0, 0.015, z); b.castShadow = true; group.add(b);
+
+  // ---- steel edge, swept along the outline instead of a box round it ----
+  {
+    const ep = [], ei = [];
+    for (let i2 = 0; i2 <= NZ; i2++) {
+      const t = (i2 / NZ) * 2 - 1, z = t * L / 2, hw = halfW(t), y0 = baseY(t);
+      for (const sgn of [-1, 1]) {
+        ep.push(sgn * hw, y0, z);
+        ep.push(sgn * (hw + 0.0016), y0 + 0.0055, z);
+      }
+    }
+    for (let i2 = 0; i2 < NZ; i2++) for (const side of [0, 1]) {
+      const o = i2 * 4 + side * 2;
+      if (side === 0) ei.push(o, o + 1, o + 4, o + 1, o + 5, o + 4);
+      else ei.push(o, o + 4, o + 1, o + 1, o + 4, o + 5);
+    }
+    const eg = new THREE.BufferGeometry();
+    eg.setAttribute('position', new THREE.Float32BufferAttribute(ep, 3));
+    eg.setIndex(ei); eg.computeVertexNormals();
+    group.add(new THREE.Mesh(eg, new THREE.MeshStandardMaterial({ color: 0xb8c0cc, metalness: 0.95, roughness: 0.18, envMapIntensity: 1.6 })));
+  }
+
+  // ---- bindings: baseplate, highback and two straps, set to a real stance ----
+  const strapMat = new THREE.MeshStandardMaterial({ color: 0x0b0f16, roughness: 0.75 });
+  const plateMat = new THREE.MeshStandardMaterial({ color: 0x1b2230, roughness: 0.5, metalness: 0.3, envMapIntensity: 1.0 });
+  const hiMat = new THREE.MeshStandardMaterial({ color: 0x232c3a, roughness: 0.55, metalness: 0.2 });
+  for (const [z, ang] of [[length * 0.2, THREE.MathUtils.degToRad(settings.regular ? 15 : -15)],
+                          [-length * 0.2, THREE.MathUtils.degToRad(settings.regular ? -6 : 6)]]) {
+    const b = new THREE.Group();
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.175, 0.016, 0.265), plateMat);
+    plate.position.y = 0.010; plate.castShadow = true; b.add(plate);
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.006, 14), plateMat);
+    disc.position.y = 0.020; b.add(disc);
+    const hi = new THREE.Mesh(new THREE.BoxGeometry(0.155, 0.135, 0.018), hiMat);
+    hi.position.set(0, 0.082, -0.118); hi.rotation.x = -0.28; hi.castShadow = true; b.add(hi);
+    const ankle = new THREE.Mesh(new THREE.BoxGeometry(0.168, 0.042, 0.016), strapMat);
+    ankle.position.set(0, 0.062, -0.030); ankle.rotation.x = -0.12; b.add(ankle);
+    const toe = new THREE.Mesh(new THREE.BoxGeometry(0.150, 0.032, 0.014), strapMat);
+    toe.position.set(0, 0.040, 0.088); toe.rotation.x = 0.35; b.add(toe);
+    for (const sx of [-1, 1]) {
+      const rat = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.026, 0.026), plateMat);
+      rat.position.set(sx * 0.086, 0.062, -0.030); b.add(rat);
+    }
+    b.position.set(0, baseY((z / (L / 2))), z);
+    b.rotation.y = ang;
+    group.add(b);
   }
 }
 

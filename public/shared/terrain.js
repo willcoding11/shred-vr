@@ -7,7 +7,7 @@ const _c = new THREE.Color();
 const _ICE = new THREE.Color(0.58, 0.74, 0.84);
 
 // Procedural "groomed corduroy" snow texture with a little sparkle noise.
-export function makeSnowTexture(size = 256) {
+export function makeSnowTexture(size = 512) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const g = c.getContext('2d');
   g.fillStyle = '#f4f7fb'; g.fillRect(0, 0, size, size);
@@ -17,7 +17,7 @@ export function makeSnowTexture(size = 256) {
     // Corduroy: 8 lines per tile, so roughly one every 75 cm on the ground, at a contrast you
     // can actually see. Plus a coarse drift pattern, because a slope of pure parallel lines
     // reads as a machine part rather than as snow.
-    const stripe = Math.sin((y / size) * Math.PI * 2 * 8) * 9;
+    const stripe = Math.sin((y / size) * Math.PI * 2 * 60) * 7;   // ~13 cm grooves on an 8 m tile
     const drift = Math.sin((x / size) * Math.PI * 2 * 3 + (y / size) * 5.1) * 4;
     const n = (Math.random() - 0.5) * 7;
     const v = 240 + stripe + drift + n;
@@ -26,7 +26,7 @@ export function makeSnowTexture(size = 256) {
   g.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 1);
-  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 16;   // 4 was moire-ing badly at grazing angles
   return t;
 }
 
@@ -144,11 +144,11 @@ export class Terrain {
     for (let z = h - 2; z >= 1; z--) edge.push([0, z]);
     const n = edge.length;
     // Three rows: a snow lip, then rock that darkens as it falls away.
-    const rows = 3, vcount = n * rows;
+    const rows = 7, vcount = n * rows;
     const pos = new Float32Array(vcount * 3), col = new Float32Array(vcount * 3), uv = new Float32Array(vcount * 2);
     const tint = (t, i, jitter) => {
       // t = 0 at the lip, 1 at the bottom
-      const snow = Math.max(0, 1 - t * 9);
+      const snow = Math.max(0, 1 - t * 4.5);
       const r = (0.30 + jitter * 0.09) * (1 - snow) + 0.93 * snow;
       const g = (0.29 + jitter * 0.08) * (1 - snow) + 0.95 * snow;
       const b = (0.30 + jitter * 0.08) * (1 - snow) + 0.99 * snow;
@@ -163,7 +163,7 @@ export class Terrain {
         const t = r / (rows - 1);
         const v = i * rows + r;
         // the face leans outward a little and is ragged, so it is not a machined plane
-        const lean = t * (5 + jitter * 7);
+        const lean = t * (5 + jitter * 7) + Math.sin(t * 9.1 + jitter * 6.3) * 2.6 * t;   // ledges, not a plane
         const cxs = Math.sign(wx) || 1, czs = gz === 0 ? -1 : gz === h - 1 ? 1 : 0;
         pos[v * 3] = wx + (gx === 0 || gx === w - 1 ? cxs * lean : 0);
         pos[v * 3 + 1] = y - (y - DEEP) * (t * t);
@@ -216,7 +216,13 @@ export class Terrain {
         const fine = curvature(H, w, h, x, z, 2);
         const broad = curvature(H, w, h, x, z, 7);
         const relief = Math.max(-1, Math.min(1, fine / 0.55 + broad / 4.0)) * this.relief;
+        // Ambient occlusion, from a third and much wider curvature: concave ground sees less of
+        // the sky, so it is darker and bluer. Nothing in the scene had any AO at all, which is
+        // most of why everything looked like it was hovering above the snow rather than in it.
+        const wide = curvature(H, w, h, x, z, 16);
+        const ao = 1 - Math.max(0, Math.min(1, -wide / 9)) * 0.30;
         snowColor(slope, x, z, this.map.env?.snowType, relief, _c);
+        _c.r *= ao; _c.g *= ao * 1.008; _c.b *= ao * 1.02;
         // frozen water, if the map says there is any here
         const ice = this.iceAt(wx, wz);
         if (ice > 0) _c.lerp(_ICE, ice * 0.85);

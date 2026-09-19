@@ -166,7 +166,7 @@ export class PropRenderer {
         const cap = Math.ceil(list.length * 1.5) + 16;
         m = new THREE.InstancedMesh(geos[key], key === 'lamp' ? this.lampMat : this.material, cap);
         m.userData.cap = cap;
-        m.castShadow = this.shadows; m.receiveShadow = false;
+        m.castShadow = this.shadows; m.receiveShadow = this.shadows;   // a forest where no tree shadows another is a flat cutout
         m.frustumCulled = false;
         m.name = 'prop:' + key;
         this.group.add(m); this.meshes[key] = m;

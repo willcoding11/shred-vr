@@ -20,8 +20,8 @@ void main(){
 }`;
 
 export class Scenery {
-  constructor(scene, { shadows = true, shadowSize = 2048, mountains = true, quality = 'fast' } = {}) {
-    this.quality = quality;
+  constructor(scene, { shadows = true, shadowSize = 2048, mountains = true, quality = 'fast', renderer = null } = {}) {
+    this.quality = quality; this.renderer = renderer;
     this.scene = scene;
     this.sun = new THREE.DirectionalLight(0xffffff, 2.6);
     this.sun.castShadow = shadows;
@@ -32,7 +32,9 @@ export class Scenery {
       // Wider than the rider needs, because a 25 degree sun throws shadows two to three times
       // the height of whatever casts them, and the hill is now casting its own.
       c.left = -110; c.right = 110; c.top = 110; c.bottom = -110; c.near = 1; c.far = 600;
-      this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.6;
+      // 0.6 m of normal bias is eleven texels at this resolution and frustum, which is why
+      // shadows were detaching from tree trunks and lift towers and floating beside them.
+      this.sun.shadow.bias = -0.0004; this.sun.shadow.normalBias = 0.08;
     }
     this.sunTarget = new THREE.Object3D();
     scene.add(this.sun, this.sunTarget); this.sun.target = this.sunTarget;
@@ -75,6 +77,27 @@ export class Scenery {
 
   // Swap the look without tearing the scene down. Only the sky material and the shadow
   // resolution actually differ; the terrain and props are rebuilt by the caller.
+  // IMAGE-BASED LIGHTING, from the sky we already have. This is the single biggest thing the
+  // scene was missing: snow shadows are blue because they are lit by a blue dome, not because
+  // something tinted them, and nothing in the scene -- not the board, not the steel edge, not
+  // the lift cable, not a window -- had anything at all to reflect. One cubemap render per
+  // lighting change, not per frame.
+  buildEnvironment() {
+    if (!this.renderer || this.quality !== 'real') {
+      if (this.scene.environment) { this.scene.environment = null; }
+      return;
+    }
+    if (!this._pmrem) {
+      this._pmrem = new THREE.PMREMGenerator(this.renderer);
+      this._envScene = new THREE.Scene();
+      this._envScene.add(new THREE.Mesh(this.sky.geometry, this.sky.material));
+    }
+    this._envRT?.dispose();
+    this._envRT = this._pmrem.fromScene(this._envScene, 0, 1, 6000);
+    this.scene.environment = this._envRT.texture;
+    this.scene.environmentIntensity = 0.55;
+  }
+
   setQuality(q) {
     if (q === this.quality) return;
     this.quality = q;
@@ -83,12 +106,17 @@ export class Scenery {
     this.sky.material.fragmentShader = real ? realSkyFrag : skyFrag;
     this.sky.material.needsUpdate = true;
     if (this.sun.shadow) { this.sun.shadow.mapSize.set(real ? 4096 : 2048, real ? 4096 : 2048); this.sun.shadow.map?.dispose(); this.sun.shadow.map = null; }
-    this.hemi.intensity = real ? 0.30 : 0.38;
     this.setEnv({});
+    this.buildEnvironment();
   }
 
   setEnv(env) {
+    const before = this.env.timeOfDay;
     this.env = { ...this.env, ...env };
+    // weather and time of day have to actually reach the sky
+    this.skyUniforms.cloud.value = 0.18 + (this.env.fog ?? 0.35) * 0.9;
+    this.skyUniforms.turbidity.value = 1.7 + (this.env.fog ?? 0.35) * 1.9;
+    if (before !== this.env.timeOfDay) this._envDirty = true;
     const t = this.env.timeOfDay ?? 0.35;               // 0 = dawn, 0.5 = noon, 1 = dusk
     // A WINTER sun: low. The old curve put it 58 degrees up at midday, which is a July noon --
     // it lights every face equally, no roller casts a shadow, and the hill reads as a flat white
@@ -113,14 +141,18 @@ export class Scenery {
     // mountain fade to nothing barely past the trees in front of you, which reads as fog rolling
     // in rather than as distance. Real mountain air is very clear; you want the far peaks
     // softened and nothing else.
-    const nearBase = this.quality === 'real' ? 520 : 330;
-    this.scene.fog.near = nearBase - f * 180; this.scene.fog.far = 4400 - f * 1500;
+    // Aerial perspective is a DEPTH CUE, not a defect: pushing the haze further out on the Real
+    // preset made the far ridge the same contrast as the snow twenty metres away, which is the
+    // most video-gamey thing a mountain can do. Same distances either way, and the colour is
+    // taken from the sky's own horizon so the haze is warm toward the sun.
+    this.scene.fog.near = 330 - f * 170; this.scene.fog.far = 4200 - f * 1400;
     this.snow.setDensity(this.env.snowfall ?? 0.2);
   }
 
   // Keep the shadow frustum and the sky centred on the viewer.
   update(dt, viewerPos, camera) {
     this.skyUniforms.time.value += dt;
+    if (this._envDirty) { this._envDirty = false; this.buildEnvironment(); }
     this.sunTarget.position.copy(viewerPos);
     this.sun.position.copy(viewerPos).addScaledVector(this.sunDir, 220);
     this.sky.position.copy(camera.position);

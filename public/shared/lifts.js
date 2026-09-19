@@ -133,8 +133,12 @@ const MAT = {
   house: new THREE.MeshStandardMaterial({ color: 0x8d99a8, roughness: 0.8 }),
 };
 
-function tower(line, i, shadows) {
-  const t = line.towers[i], g = new THREE.Group();
+// Returns { steel, dark } geometry already placed in world space. It used to return a Group of
+// four or five separate meshes per tower, and with the chairs on top of it one lift was putting
+// three hundred and forty objects into the scene -- 681 for the two on Alpine Bowl. On a headset
+// the draw call is the expensive part, not the triangle.
+function towerGeo(line, i) {
+  const t = line.towers[i], g = { steel: [], dark: [] };
   // A LATTICE, not a lamppost. One tapered cylinder with a box across the top was the most
   // game-looking object on the mountain. Three splayed legs and a ladder of cross bracing is
   // about forty triangles, merged into one geometry, and it reads as lift hardware immediately.
@@ -165,53 +169,53 @@ function tower(line, i, shadows) {
     }
   }
   parts.push(new THREE.CylinderGeometry(RB + 0.3, RB + 0.34, 0.3, 12).translate(0, 0.15, 0));  // base plate
-  const mast = new THREE.Mesh(mergeLift(parts), MAT.steel);
-  mast.castShadow = shadows; g.add(mast);
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(LIFT.gauge + 1.4, 0.26, 0.4), MAT.steel);
-  arm.position.y = t.h; arm.castShadow = shadows;
-  arm.rotation.y = Math.atan2(line.side.x, line.side.z) + Math.PI / 2;
-  g.add(arm);
-  for (const s of [-1, 1]) {
-    const sheave = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.2, 10), MAT.cable);
-    sheave.rotation.z = Math.PI / 2;
-    sheave.position.set(line.side.x * (LIFT.gauge / 2) * s, t.h - 0.2, line.side.z * (LIFT.gauge / 2) * s);
-    sheave.rotation.y = Math.atan2(line.dir.x, line.dir.z);
-    g.add(sheave);
+  g.steel.push(mergeLift(parts));
+  const arm = new THREE.BoxGeometry(LIFT.gauge + 1.4, 0.26, 0.4);
+  arm.rotateY(Math.atan2(line.side.x, line.side.z) + Math.PI / 2);
+  arm.translate(0, t.h, 0);
+  g.steel.push(arm);
+  for (const sg of [-1, 1]) {
+    const sheave = new THREE.CylinderGeometry(0.42, 0.42, 0.2, 10);
+    sheave.rotateZ(Math.PI / 2);
+    sheave.rotateY(Math.atan2(line.dir.x, line.dir.z));
+    sheave.translate(line.side.x * (LIFT.gauge / 2) * sg, t.h - 0.2, line.side.z * (LIFT.gauge / 2) * sg);
+    g.dark.push(sheave);
   }
-  g.position.set(t.x, t.ground, t.z);
+  for (const list of [g.steel, g.dark]) for (const geo of list) geo.translate(t.x, t.ground, t.z);
   return g;
 }
 
-function chairMesh(shadows) {
-  const g = new THREE.Group();
-  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, LIFT.hanger, 6), MAT.steel);
-  bar.position.y = -LIFT.hanger / 2; g.add(bar);
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 0.62), MAT.seat);
-  seat.position.y = -LIFT.hanger; seat.castShadow = shadows; g.add(seat);
-  const back = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.72, 0.1), MAT.chair);
-  back.position.set(0, -LIFT.hanger + 0.42, -0.3); back.castShadow = shadows; g.add(back);
-  for (const s of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.62), MAT.chair);
-    arm.position.set(s * 0.82, -LIFT.hanger + 0.22, 0); g.add(arm);
-  }
-  const foot = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.3), MAT.steel);
-  foot.position.set(0, -LIFT.hanger - 0.52, 0.42); g.add(foot);
-  return g;
+// Two geometries rather than six meshes, split by material so one InstancedMesh can carry every
+// chair on every lift for each: two draw calls for all of them, instead of one Group of six per
+// chair and two hundred chairs.
+function chairGeos() {
+  const steel = [
+    new THREE.CylinderGeometry(0.06, 0.06, LIFT.hanger, 6).translate(0, -LIFT.hanger / 2, 0),
+    new THREE.BoxGeometry(1.5, 0.08, 0.3).translate(0, -LIFT.hanger - 0.52, 0.42),
+    new THREE.BoxGeometry(0.34, 0.20, 0.34).translate(0, -0.1, 0),          // the grip clamp
+  ];
+  const body = [
+    new THREE.BoxGeometry(1.7, 0.12, 0.62).translate(0, -LIFT.hanger, 0),
+    new THREE.BoxGeometry(1.7, 0.72, 0.1).translate(0, -LIFT.hanger + 0.42, -0.3),
+    new THREE.BoxGeometry(0.08, 0.36, 0.62).translate(-0.82, -LIFT.hanger + 0.22, 0),
+    new THREE.BoxGeometry(0.08, 0.36, 0.62).translate(0.82, -LIFT.hanger + 0.22, 0),
+  ];
+  return { steel: mergeLift(steel), body: mergeLift(body) };
 }
 
-function station(line, end, shadows) {
-  const t = line.towers[end ? line.n : 0], g = new THREE.Group();
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.4, 5.5), MAT.house);
-  roof.position.y = t.h + 0.6; roof.castShadow = shadows; g.add(roof);
+function stationGeo(line, end) {
+  const t = line.towers[end ? line.n : 0];
+  const house = [
+    new THREE.BoxGeometry(7.5, 0.4, 5.5).translate(0, t.h + 0.6, 0),
+    new THREE.BoxGeometry(8.5, 0.18, 7).translate(0, 0.09, 0),
+  ];
+  const steel = [];
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, t.h + 0.6, 0.3), MAT.steel);
-    post.position.set(sx * 3.3, (t.h + 0.6) / 2, sz * 2.4); g.add(post);
+    steel.push(new THREE.BoxGeometry(0.3, t.h + 0.6, 0.3).translate(sx * 3.3, (t.h + 0.6) / 2, sz * 2.4));
   }
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.18, 7), MAT.house);
-  deck.position.y = 0.09; deck.receiveShadow = shadows; g.add(deck);
-  g.position.set(t.x, t.ground, t.z);
-  g.rotation.y = Math.atan2(line.dir.x, line.dir.z);
-  return g;
+  const yaw = Math.atan2(line.dir.x, line.dir.z);
+  for (const list of [house, steel]) for (const geo of list) { geo.rotateY(yaw); geo.translate(t.x, t.ground, t.z); }
+  return { house, steel };
 }
 
 export class LiftRenderer {
@@ -221,40 +225,84 @@ export class LiftRenderer {
     this.lines = (map.lifts || []).map((l) => buildLine(map, l));
     this.chairs = [];
     this.phase = 0;
+    const steel = [], dark = [], house = [];
     for (const line of this.lines) {
-      for (let i = 0; i <= line.n; i++) this.group.add(tower(line, i, shadows));
-      this.group.add(station(line, false, shadows), station(line, true, shadows));
+      for (let i = 0; i <= line.n; i++) {
+        const g = towerGeo(line, i);
+        steel.push(...g.steel); dark.push(...g.dark);
+      }
+      for (const end of [false, true]) {
+        const g = stationGeo(line, end);
+        house.push(...g.house); steel.push(...g.steel);
+      }
       // the cable itself, as a thin tube through the sagging spans
       for (const side of [-1, 1]) {
         const pts = [];
         for (let k = 0; k <= line.n * 6; k++) pts.push(cableAt(line, k / (line.n * 6), side));
-        const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), line.n * 6, 0.05, 5, false), MAT.cable);
-        this.group.add(tube);
+        // 3 radial segments, not 5. It is a five-centimetre cable; nobody has ever counted its
+        // sides, and at 5 it was costing more triangles than the towers it hangs from.
+        dark.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), line.n * 4, 0.05, 3, false));
       }
       // chairs, evenly spaced, going up one side and back down the other
       const count = Math.max(2, Math.round(line.len / LIFT.chairGap));
-      for (let i = 0; i < count; i++) {
-        for (const side of [1, -1]) {
-          const m = chairMesh(shadows);
-          this.chairs.push({ mesh: m, line, side, offset: i / count });
-          this.group.add(m);
-        }
+      for (let i = 0; i < count; i++) for (const side of [1, -1]) {
+        this.chairs.push({ line, side, offset: i / count });
+      }
+    }
+    const add = (parts, mat, name, cast) => {
+      if (!parts.length) return;
+      const m = new THREE.Mesh(mergeLift(parts), mat);
+      m.castShadow = shadows && cast; m.receiveShadow = shadows; m.name = name;
+      this.group.add(m);
+    };
+    add(steel, MAT.steel, 'lift-steel', true);
+    add(dark, MAT.cable, 'lift-cable', false);
+    add(house, MAT.house, 'lift-house', true);
+
+    if (this.chairs.length) {
+      const g = chairGeos();
+      this.chairSteel = new THREE.InstancedMesh(g.steel, MAT.steel, this.chairs.length);
+      this.chairBody = new THREE.InstancedMesh(g.body, MAT.chair, this.chairs.length);
+      for (const m of [this.chairSteel, this.chairBody]) {
+        m.castShadow = shadows; m.frustumCulled = false; m.name = 'lift-chairs';
+        m.count = 0;          // nothing until update() has put them on the cable
+        this.group.add(m);
       }
     }
     this._v = new THREE.Vector3();
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._e = new THREE.Euler();
+    this._s = new THREE.Vector3(1, 1, 1);
   }
 
-  update(dt) {
-    if (!this.lines.length) return;
+  update(dt, viewerPos) {
+    if (!this.lines.length || !this.chairSteel) return;
     this.phase += dt;
-    for (const c of this.chairs) {
+    // Only the chairs near enough to make out. A lift line is two hundred chairs and you can read
+    // maybe a dozen of them; the rest are a row of dots that cost a full chair each.
+    const far = 340 * 340;
+    let n = 0;
+    for (let i = 0; i < this.chairs.length; i++) {
+      const c = this.chairs[i];
       const travel = this.phase / c.line.rideTime;
       let t = (c.offset + travel) % 1;
       if (c.side < 0) t = 1 - t;                       // the down side runs the other way
       cableAt(c.line, t, c.side, this._v);
-      c.mesh.position.copy(this._v);
-      c.mesh.rotation.y = Math.atan2(c.line.dir.x, c.line.dir.z) + (c.side < 0 ? Math.PI : 0);
+      this._e.set(0, Math.atan2(c.line.dir.x, c.line.dir.z) + (c.side < 0 ? Math.PI : 0), 0);
+      this._q.setFromEuler(this._e);
+      if (viewerPos) {
+        const dx = this._v.x - viewerPos.x, dz = this._v.z - viewerPos.z;
+        if (dx * dx + dz * dz > far) continue;
+      }
+      this._m.compose(this._v, this._q, this._s);
+      this.chairSteel.setMatrixAt(n, this._m);
+      this.chairBody.setMatrixAt(n, this._m);
+      n++;
     }
+    this.chairSteel.count = n; this.chairBody.count = n;
+    this.chairSteel.instanceMatrix.needsUpdate = true;
+    this.chairBody.instanceMatrix.needsUpdate = true;
   }
 
   // Where the chair a rider boarded at time `phase0` has got to, as a 0..1 parameter.

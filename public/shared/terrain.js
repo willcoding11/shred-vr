@@ -5,6 +5,7 @@ import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
 const _ICE = new THREE.Color(0.58, 0.74, 0.84);
+const _n = [0, 1, 0];
 
 // Procedural "groomed corduroy" snow texture with a little sparkle noise.
 export function makeSnowTexture(size = 512) {
@@ -59,7 +60,6 @@ export class Terrain {
   constructor(map, { shadows = true, texture = true, relief = 1, quality = 'fast' } = {}) {
     this.relief = relief; this.quality = quality;
     this.map = map;
-    this.geometry = new THREE.BufferGeometry();
     this.material = new THREE.MeshStandardMaterial({
       vertexColors: true, metalness: 0.0,
       map: texture ? makeSnowTexture() : null,
@@ -74,7 +74,29 @@ export class Terrain {
       this.material.normalScale = new THREE.Vector2(0.55, 0.55);
       patchSnowMaterial(this.material, { sparkle: 1, subsurface: 1 });
     }
-    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    // ONE MESH PER TILE, not one mesh for the mountain.
+    //
+    // The heightfield used to be a single Mesh with frustumCulled = false, which means every
+    // triangle of it was submitted every frame for both eyes whether or not it was behind you:
+    // 230,000 of them on a square-kilometre map, on a headset that wants the whole frame in about
+    // eleven milliseconds. Cut into tiles, three things become possible at once -- three.js culls
+    // the tiles you cannot see, tiles past the fog do not draw at all, and distant tiles can drop
+    // to a coarser index buffer over the same vertices.
+    //
+    // 48, not 32. The tile size trades draw calls against how tightly you can cull: at 32 a
+    // kilometre of mountain was 121 tiles and standing at the top looking down the whole hill put
+    // 147 draw calls in the frame, which on a headset is worse than the triangles it saved.
+    this.CHUNK = 48;
+    // Four levels. The distances are a compromise with the VERTEX COLOURS rather than with the
+    // silhouette: the relief shading, the ambient occlusion and the baked sun all live per vertex,
+    // so a coarser tile loses shading detail before it loses shape. 90 m keeps full detail over
+    // everything you are about to ride.
+    // Measured from the tile's NEAR EDGE, so a 144 m tile qualifies for full detail while its
+    // centre is still 142 m away -- which is why these look closer than they play. At [90,...]
+    // twenty-one tiles sat at full detail and that alone was 97,000 triangles.
+    this.LOD_D = [40, 200, 430]; this.drawDistance = 1500;
+    this.chunks = [];
+    this.mesh = new THREE.Group();
     this.mesh.name = 'terrain';
     // A curtain hanging off the map's border. The heightfield has to stop somewhere, and where it
     // stops you were looking straight through the gap between its edge and the distant mountains
@@ -90,7 +112,7 @@ export class Terrain {
     this.skirt.frustumCulled = false;
     this.skirt.castShadow = false; this.skirt.receiveShadow = false;
     this.mesh.add(this.skirt);
-    this.mesh.receiveShadow = shadows;
+    this.shadows = shadows;
     // The hill shades ITSELF. Without this a roller has no shadow of its own, and the only
     // shadows on the whole slope come from trees -- which is most of why it reads as a flat
     // white sheet. With a low sun every lip and gully throws one.
@@ -99,8 +121,7 @@ export class Terrain {
     // resubmits every triangle of it: at a square kilometre that is 230k triangles drawn twice a
     // frame, on a headset. Past that size the relief shading and the trees carry it instead.
     const cells = this.map.size.w * this.map.size.h;
-    this.mesh.castShadow = shadows && cells < 90000;
-    this.mesh.frustumCulled = false;
+    this.selfShadow = shadows && cells < 90000;
     this.colorMode = 'snow';   // 'snow' | 'slope' (editor overlay: steepness bands)
     this.rebuild();
   }
@@ -108,32 +129,88 @@ export class Terrain {
   setMap(map) { this.map = map; this.rebuild(); }
 
   rebuild() {
-    const { w, h } = this.map.size, sp = this.map.spacing;
-    const n = w * h;
-    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), uv = new Float32Array(n * 2);
-    for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
-      const i = z * w + x, [wx, wz] = gridToWorld(this.map, x, z);
-      pos[i * 3] = wx; pos[i * 3 + 1] = this.map.heights[i]; pos[i * 3 + 2] = wz;
-      uv[i * 2] = x * sp / 8; uv[i * 2 + 1] = z * sp / 8;
+    const { w, h } = this.map.size;
+    for (const c of this.chunks) { c.geo.dispose(); this.mesh.remove(c.mesh); }
+    this.chunks = [];
+    const CS = this.CHUNK;
+    for (let z0 = 0; z0 < h - 1; z0 += CS) for (let x0 = 0; x0 < w - 1; x0 += CS) {
+      this.chunks.push(this.buildChunk(x0, z0, Math.min(w - 1, x0 + CS), Math.min(h - 1, z0 + CS)));
     }
-    const idx = new (n > 65535 ? Uint32Array : Uint16Array)((w - 1) * (h - 1) * 6);
-    let k = 0;
-    for (let z = 0; z < h - 1; z++) for (let x = 0; x < w - 1; x++) {
-      const a = z * w + x, b = a + 1, c = a + w, d = c + 1;
-      idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d;
-    }
-    this.geometry.dispose();
-    this.geometry = new THREE.BufferGeometry();
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    this.geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    this.geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    this.geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    this.geometry.setIndex(new THREE.BufferAttribute(idx, 1));
-    this.mesh.geometry = this.geometry;
     this.bakeLight();
     this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 });
-    this.geometry.computeBoundingSphere();
     this.buildSkirt();
+  }
+
+  // One tile: its own vertices (edges are duplicated into both neighbours, which costs about 14%
+  // more vertices and means the shared edge is computed from the same global heights on both
+  // sides, so there is no seam) and one index buffer per level of detail.
+  buildChunk(x0, z0, x1, z1) {
+    const sp = this.map.spacing;
+    const cw = x1 - x0 + 1, ch = z1 - z0 + 1, n = cw * ch;
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    const nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+    for (let lz = 0; lz < ch; lz++) for (let lx = 0; lx < cw; lx++) {
+      const i = lz * cw + lx;
+      const [wx, wz] = gridToWorld(this.map, x0 + lx, z0 + lz);
+      pos[i * 3] = wx; pos[i * 3 + 2] = wz;
+      uv[i * 2] = (x0 + lx) * sp / 8; uv[i * 2 + 1] = (z0 + lz) * sp / 8;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+
+    // A stride only works if it divides the tile exactly, which the last row and column of tiles
+    // on a map whose size is not a multiple of 32 will not. Those simply keep fewer levels.
+    const lods = [];
+    for (const stride of [1, 2, 4, 8]) {
+      if ((cw - 1) % stride || (ch - 1) % stride) break;
+      const sx = (cw - 1) / stride, sz = (ch - 1) / stride;
+      const idx = new (n > 65535 ? Uint32Array : Uint16Array)(sx * sz * 6);
+      let k = 0;
+      for (let j = 0; j < sz; j++) for (let i = 0; i < sx; i++) {
+        const a = (j * stride) * cw + i * stride, b = a + stride;
+        const c = a + stride * cw, d = c + stride;
+        idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d;
+      }
+      lods.push(new THREE.BufferAttribute(idx, 1));
+    }
+    geo.setIndex(lods[0]);
+    const mesh = new THREE.Mesh(geo, this.material);
+    mesh.name = 'terrain-chunk';
+    mesh.receiveShadow = this.shadows;
+    mesh.castShadow = this.selfShadow;
+    mesh.matrixAutoUpdate = false;                      // tiles never move
+    this.mesh.add(mesh);
+    const [cx, cz] = gridToWorld(this.map, (x0 + x1) / 2, (z0 + z1) / 2);
+    return { mesh, geo, lods, lod: 0, x0, z0, x1, z1, cw, ch, cx, cz,
+             radius: Math.hypot(cw, ch) * sp * 0.5 };
+  }
+
+  // Called once a frame with where the rider is. Everything here is a visibility decision; the
+  // frustum test itself is left to three.js, which does it per eye with the camera that is
+  // actually rendering -- doing it here with the app camera would be wrong inside XR.
+  update(viewerPos) {
+    if (!viewerPos) return;
+    for (const c of this.chunks) {
+      const d = Math.max(0, Math.hypot(viewerPos.x - c.cx, viewerPos.z - c.cz) - c.radius);
+      if (d > this.drawDistance) { c.mesh.visible = false; continue; }
+      c.mesh.visible = true;
+      let want = 0;
+      while (want < this.LOD_D.length && d >= this.LOD_D[want]) want++;
+      want = Math.min(c.lods.length - 1, want);
+      if (want !== c.lod) { c.lod = want; c.geo.setIndex(c.lods[want]); }
+      // only the near tiles are worth putting through the shadow pass
+      if (this.selfShadow) c.mesh.castShadow = want === 0;
+    }
+  }
+
+  dispose() {
+    for (const c of this.chunks) { c.geo.dispose(); this.mesh.remove(c.mesh); }
+    this.chunks = [];
+    this.skirtGeo?.dispose();
+    this.material.dispose(); this.skirtMat.dispose();
   }
 
   // Where the sun is. Recolours the hill when it moves, and does nothing when it has not.
@@ -224,14 +301,18 @@ export class Terrain {
     // from the top of the hill the north border was a seven-hundred-metre curtain hanging in front
     // of everything. It only has to reach a little under the floor.
     const DEEP = low - 70;
+    // Every third border vertex, not every one. At full density this was 16,260 triangles for a
+    // slope you only ever see past the edge of the map, which was more than the trees.
+    const STEP = 3;
     const edge = [];
-    for (let x = 0; x < w; x++) edge.push([x, 0]);
-    for (let z = 1; z < h; z++) edge.push([w - 1, z]);
-    for (let x = w - 2; x >= 0; x--) edge.push([x, h - 1]);
-    for (let z = h - 2; z >= 1; z--) edge.push([0, z]);
+    for (let x = 0; x < w; x += STEP) edge.push([x, 0]);
+    for (let z = STEP; z < h; z += STEP) edge.push([w - 1, z]);
+    for (let x = w - 1 - STEP; x >= 0; x -= STEP) edge.push([x, h - 1]);
+    for (let z = h - 1 - STEP; z >= STEP; z -= STEP) edge.push([0, z]);
+    edge.push([0, 0]);
     const n = edge.length;
     // Three rows: a snow lip, then rock that darkens as it falls away.
-    const rows = 7, vcount = n * rows;
+    const rows = 5, vcount = n * rows;
     const pos = new Float32Array(vcount * 3), col = new Float32Array(vcount * 3), uv = new Float32Array(vcount * 2);
     const tint = (t, i, jitter) => {
       // t = 0 at the lip, 1 at the bottom.
@@ -293,62 +374,60 @@ export class Terrain {
   // Refresh vertex heights, normals and colours inside a grid rect (inclusive).
   updateRegion(r) {
     const { w, h } = this.map.size;
-    const H = this.map.heights;
-    const pos = this.geometry.attributes.position, col = this.geometry.attributes.color;
-    const x0 = Math.max(0, r.x0 - 1), z0 = Math.max(0, r.z0 - 1), x1 = Math.min(w - 1, r.x1 + 1), z1 = Math.min(h - 1, r.z1 + 1);
-    const nrm = [0, 1, 0];
-    let nrmAttr0 = this.geometry.attributes.normal;
-    if (!nrmAttr0) {
-      this.geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(w * h * 3), 3));
-      nrmAttr0 = this.geometry.attributes.normal;
-    }
-    const nrmCache = nrmAttr0.array;
-    for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
-      const i = z * w + x;
-      pos.array[i * 3 + 1] = this.map.heights[i];
-      const [wx, wz] = gridToWorld(this.map, x, z);
-      void wx;
-      normalAt(this.map, wx, wz, nrm);
-      nrmCache[i * 3] = nrm[0]; nrmCache[i * 3 + 1] = nrm[1]; nrmCache[i * 3 + 2] = nrm[2];
-      const slope = Math.acos(Math.min(1, nrm[1])) * 57.2958;
-      if (this.colorMode === 'slope') slopeBandColor(slope, _c);
-      else {
-        // fine picks up rollers and lips, broad picks up gullies and whole rolls of the hill
-        const fine = curvature(H, w, h, x, z, 2);
-        const broad = curvature(H, w, h, x, z, 7);
-        const relief = Math.max(-1, Math.min(1, fine / 0.55 + broad / 4.0)) * this.relief;
-        // Ambient occlusion, from a third and much wider curvature: concave ground sees less of
-        // the sky, so it is darker and bluer. Nothing in the scene had any AO at all, which is
-        // most of why everything looked like it was hovering above the snow rather than in it.
-        const wide = curvature(H, w, h, x, z, 16);
-        const ao = 1 - Math.max(0, Math.min(1, -wide / 9)) * 0.30;
-        snowColor(slope, x, z, this.map.env?.snowType, relief, _c);
-        _c.r *= ao; _c.g *= ao * 1.008; _c.b *= ao * 1.02;
-        // frozen water, if the map says there is any here
-        const ice = this.iceAt(wx, wz);
-        if (ice > 0) _c.lerp(_ICE, ice * 0.85);
-        // Baked sun. Snow out of the sun is not merely darker, it is BLUE -- it is lit by the sky
-        // dome instead -- so the channels come down by different amounts. Flat darkening here
-        // made the shadowed ground look grey and dirty.
-        const lit = this.bake ? this.bake[i] : 1;
-        if (lit < 0.999) {
-          const k = (1 - lit) * (this.quality === 'real' ? 1 : 0.8);
-          _c.r *= 1 - k * 0.44; _c.g *= 1 - k * 0.35; _c.b *= 1 - k * 0.19;
-        }
+    const x0 = Math.max(0, r.x0 - 1), z0 = Math.max(0, r.z0 - 1);
+    const x1 = Math.min(w - 1, r.x1 + 1), z1 = Math.min(h - 1, r.z1 + 1);
+    for (const c of this.chunks) {
+      if (c.x1 < x0 || c.x0 > x1 || c.z1 < z0 || c.z0 > z1) continue;
+      const az0 = Math.max(c.z0, z0), az1 = Math.min(c.z1, z1);
+      const ax0 = Math.max(c.x0, x0), ax1 = Math.min(c.x1, x1);
+      for (let gz = az0; gz <= az1; gz++) for (let gx = ax0; gx <= ax1; gx++) this.writeVertex(c, gx, gz);
+      // whole rows, so one contiguous upload per attribute rather than one per cell
+      const from = (az0 - c.z0) * c.cw, count = (az1 - az0 + 1) * c.cw;
+      for (const a of [c.geo.attributes.position, c.geo.attributes.color, c.geo.attributes.normal]) {
+        if (a.addUpdateRange) { a.addUpdateRange(from * a.itemSize, count * a.itemSize); a.needsUpdate = true; }
+        else a.needsUpdate = true;
       }
-      col.array[i * 3] = _c.r; col.array[i * 3 + 1] = _c.g; col.array[i * 3 + 2] = _c.b;
+      c.geo.boundingSphere = null;
+      c.geo.computeBoundingSphere();
     }
-    // Normals for the dirty rect were filled in the loop above.
-    const nrmAttr = nrmAttr0;
-    // upload only the affected span of each buffer
-    const from = z0 * w * 3, count = (z1 - z0 + 1) * w * 3;
-    // three.js merges accumulated ranges and clears them itself after upload, so do NOT
-    // clear them here -- that would drop earlier dirty rects from the same frame.
-    for (const a of [pos, col, nrmAttr]) {
-      if (a.addUpdateRange) { a.addUpdateRange(from, count); a.needsUpdate = true; }
-      else a.needsUpdate = true;
+  }
+
+  // One vertex of one tile: its height, its normal and its colour.
+  writeVertex(c, gx, gz) {
+    const { w, h } = this.map.size, H = this.map.heights;
+    const g = gz * w + gx, i = (gz - c.z0) * c.cw + (gx - c.x0);
+    const pos = c.geo.attributes.position.array, col = c.geo.attributes.color.array;
+    const nrmA = c.geo.attributes.normal.array;
+    pos[i * 3 + 1] = H[g];
+    const [wx, wz] = gridToWorld(this.map, gx, gz);
+    normalAt(this.map, wx, wz, _n);
+    nrmA[i * 3] = _n[0]; nrmA[i * 3 + 1] = _n[1]; nrmA[i * 3 + 2] = _n[2];
+    const slope = Math.acos(Math.min(1, _n[1])) * 57.2958;
+    if (this.colorMode === 'slope') slopeBandColor(slope, _c);
+    else {
+      // fine picks up rollers and lips, broad picks up gullies and whole rolls of the hill
+      const fine = curvature(H, w, h, gx, gz, 2);
+      const broad = curvature(H, w, h, gx, gz, 7);
+      const relief = Math.max(-1, Math.min(1, fine / 0.55 + broad / 4.0)) * this.relief;
+      // Ambient occlusion, from a third and much wider curvature: concave ground sees less of
+      // the sky, so it is darker and bluer. Nothing in the scene had any AO at all, which is
+      // most of why everything looked like it was hovering above the snow rather than in it.
+      const wide = curvature(H, w, h, gx, gz, 16);
+      const ao = 1 - Math.max(0, Math.min(1, -wide / 9)) * 0.30;
+      snowColor(slope, gx, gz, this.map.env?.snowType, relief, _c);
+      _c.r *= ao; _c.g *= ao * 1.008; _c.b *= ao * 1.02;
+      const ice = this.iceAt(wx, wz);
+      if (ice > 0) _c.lerp(_ICE, ice * 0.85);
+      // Baked sun. Snow out of the sun is not merely darker, it is BLUE -- it is lit by the sky
+      // dome instead -- so the channels come down by different amounts. Flat darkening here
+      // made the shadowed ground look grey and dirty.
+      const lit = this.bake ? this.bake[g] : 1;
+      if (lit < 0.999) {
+        const k = (1 - lit) * (this.quality === 'real' ? 1 : 0.8);
+        _c.r *= 1 - k * 0.44; _c.g *= 1 - k * 0.35; _c.b *= 1 - k * 0.19;
+      }
     }
-    this.geometry.boundingSphere = null;
+    col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b;
   }
 
   // How much of this point is frozen lake, 0 to 1. Cheap: maps carry a handful of ellipses.

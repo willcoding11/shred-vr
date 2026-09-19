@@ -329,6 +329,13 @@ export class Viewport {
   render(dt) {
     this.controls.update();
     this.ageRider();
+    // The editor orbits a target rather than standing somewhere, so the tiles are chosen from the
+    // camera. Without this the terrain would draw every tile at full detail, which is what it did
+    // before it was tiled at all.
+    this.terrain?.update(this.camera.position);
+    this.props?.cull(this.camera.position);
+    // The editor never ran the lifts, so their chairs sat in a pile at the world origin.
+    this.lifts?.update(dt, this.camera.position);
     this.scenery.update(dt, this.controls.target, this.camera);
     this.renderer.render(this.scene, this.camera);
   }

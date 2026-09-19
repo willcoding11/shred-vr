@@ -125,6 +125,23 @@ const rnd = (seed) => { let s = seed; return () => { s = (s * 1664525 + 10139042
 // could read the same white snow collars in the same places on tier 3 and tier 7 of every tree in
 // frame. Four geometries per conifer and three per birch is eleven extra draw calls in total, and
 // it is the difference between a forest and wallpaper.
+// The cheapest tree that still reads as a tree, for the ones a long way off. A real conifer here
+// is about 340 triangles and there are nine hundred of them on a map; at three hundred metres you
+// cannot tell this from that, and it is sixteen.
+function farConifer(dark = false) {
+  const parts = [
+    colored(new THREE.CylinderGeometry(0.09, 0.16, 2.2, 3), '#43331f').translate(0, 1.1, 0),
+    colored(new THREE.ConeGeometry(1.5, 6.4, 5), dark ? '#1d4a33' : '#2c5f3a').translate(0, 5.0, 0),
+  ];
+  return mergeGeometries(parts);
+}
+function farBirch() {
+  return mergeGeometries([
+    colored(new THREE.CylinderGeometry(0.08, 0.13, 4.2, 3), '#d9d2c5').translate(0, 2.1, 0),
+    colored(new THREE.ConeGeometry(1.2, 3.4, 5), '#8aa06a').translate(0, 4.6, 0),
+  ]);
+}
+
 let vcache = null, vcacheQ = null;
 export function propVariants(quality = 'fast') {
   if (vcache && vcacheQ === quality) return vcache;
@@ -148,6 +165,9 @@ export function propGeometries(quality = 'fast') {
   const v = propVariants(quality);
   cache = {
     pine: v.pine[0], fir: v.fir[0], birch: v.birch[0],
+    // the two cheaper tiers the renderer swaps in with distance
+    'pine:mid': pine(), 'fir:mid': fir(), 'birch:mid': birch(),
+    'pine:far': farConifer(false), 'fir:far': farConifer(true), 'birch:far': farBirch(),
     rock: rockGeo(1.0, '#6b7280', 1), boulder: rockGeo(2.4, '#4b5563', 7),
     gateA: gate('#ef4444'), gateB: gate('#3b82f6'),
     flag: flag(), fence: fence(), lamp: lamp(), sign: sign(), snowman: snowman(), hut: hut(),
@@ -156,7 +176,19 @@ export function propGeometries(quality = 'fast') {
   return cache;
 }
 
-// Renders map.props as one InstancedMesh per geometry. Call sync() after any change.
+// Renders map.props as instanced meshes, in distance tiers, and only the ones near enough to see.
+//
+// This used to be one InstancedMesh per geometry with frustumCulled = false and every instance
+// drawn, which on the open mountain measured 347,000 triangles of tree submitted every frame for
+// both eyes -- four times the entire terrain. Nothing was culled because an InstancedMesh covering
+// a square kilometre has a bounding sphere covering a square kilometre, so three.js can never
+// reject it; the culling has to be done per instance, here.
+//
+// Three tiers: the full mesh close up, the Fast preset's own cheap geometry in the middle
+// distance (it already exists, and at a hundred and fifty metres it is indistinguishable), and a
+// cone on a stick beyond that. Rebuilt only when the viewer has actually moved.
+const TIER_NEAR = 110, TIER_MID = 280, TIER_FAR = 520, TIER_PROP = 460;
+
 export class PropRenderer {
   constructor(map, { shadows = true, quality = 'fast' } = {}) {
     this.map = map; this.shadows = shadows; this.quality = quality;
@@ -164,9 +196,12 @@ export class PropRenderer {
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
     this.meshes = {};
+    this.items = [];
+    this._last = new THREE.Vector3(1e9, 1e9, 1e9);
     this.sync();
   }
   setMap(map) { this.map = map; this.sync(); }
+
   // Trees are spread across the variant geometries BY POSITION, so a given tree is always the
   // same tree: re-syncing after an edit must not reshuffle the forest.
   geoKey(p, gateIndex) {
@@ -175,67 +210,99 @@ export class PropRenderer {
     if (!v || v.length < 2) return p.t;
     return p.t + '#' + (Math.abs(Math.round(p.x * 7.31 + p.z * 13.17)) % v.length);
   }
+
+  // Everything that does not change as you move: the world matrix and the tint of every prop, and
+  // which mesh it belongs to at each tier. Done once, so the per-frame pass is only a copy.
   sync() {
     const geos = propGeometries(this.quality);
-    const buckets = {};
+    const vars = propVariants(this.quality);
+    this.items = [];
+    const caps = {};
     let gi = 0;
     for (const p of this.map.props) {
       if (!PROP_TYPES[p.t]) continue;
-      const key = this.geoKey(p, p.t === 'gate' ? gi++ : 0);
-      (buckets[key] ||= []).push(p);
-    }
-    for (const key of Object.keys(this.meshes)) {
-      if (!buckets[key]) { this.group.remove(this.meshes[key]); this.meshes[key].dispose(); delete this.meshes[key]; }
-    }
-    for (const [key, list] of Object.entries(buckets)) {
-      let m = this.meshes[key];
-      if (!m || m.userData.cap < list.length || m.userData.cap > list.length * 4 + 64) {
-        if (m) { this.group.remove(m); m.dispose(); }
-        const cap = Math.ceil(list.length * 1.5) + 16;
-        const hash = key.indexOf('#');
-        const geo = hash < 0 ? geos[key] : propVariants(this.quality)[key.slice(0, hash)][+key.slice(hash + 1)];
-        m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : this.material, cap);
-        m.userData.cap = cap;
-        // Per-instance tint. Every conifer was the identical green, because one material with no
-        // instanceColor is one colour however many variants of the mesh you build.
-        m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
-        m.castShadow = this.shadows; m.receiveShadow = this.shadows;   // a forest where no tree shadows another is a flat cutout
-        m.frustumCulled = false;
-        m.name = 'prop:' + key;
-        this.group.add(m); this.meshes[key] = m;
+      const tree = p.t === 'pine' || p.t === 'fir' || p.t === 'birch';
+      const near = this.geoKey(p, p.t === 'gate' ? gi++ : 0);
+      const keys = tree ? [near, p.t + '@mid', p.t + '@far'] : [near];
+      const s = p.s || 1;
+      const y = heightAt(this.map, p.x, p.z) - 0.05 - (tree ? 0.30 * s : 0);
+      tmpP.set(p.x, y, p.z);
+      if (tree || p.t === 'lamp' || p.t === 'sign' || p.t === 'snowman') {
+        tmpQ.setFromEuler(tmpE.set(0, p.r || 0, 0));
+      } else {
+        const n = normalAt(this.map, p.x, p.z);
+        tmpN.set(n[0], n[1], n[2]);
+        tmpQ.setFromUnitVectors(UP, tmpN);
+        tmpQ2.setFromEuler(tmpE.set(0, p.r || 0, 0));
+        tmpQ.multiply(tmpQ2);
       }
-      m.count = list.length;
-      const tree = key.startsWith('pine') || key.startsWith('fir') || key.startsWith('birch');
-      list.forEach((p, i) => {
-        const s = p.s || 1;
-        // Trees stand straight while the ground does not, so a big one on a steep face floated
-        // clear of the snow on its downhill side and the lowest tier's skirt hung over it with a
-        // clean hard edge. Sinking it in proportion to its size buries that edge; the contact
-        // shading the terrain bakes around every trunk does the rest.
-        const y = heightAt(this.map, p.x, p.z) - 0.05 - (tree ? 0.30 * s : 0);
-        tmpP.set(p.x, y, p.z);
-        // trees stand straight, everything else tilts with the ground a little
-        if (p.t === 'pine' || p.t === 'fir' || p.t === 'birch' || p.t === 'lamp' || p.t === 'sign' || p.t === 'snowman') {
-          tmpQ.setFromEuler(tmpE.set(0, p.r || 0, 0));
-        } else {
-          const n = normalAt(this.map, p.x, p.z);
-          tmpN.set(n[0], n[1], n[2]);
-          tmpQ.setFromUnitVectors(UP, tmpN);
-          tmpQ2.setFromEuler(tmpE.set(0, p.r || 0, 0));
-          tmpQ.multiply(tmpQ2);
-        }
-        tmpS.set(s, s, s);
-        tmpM.compose(tmpP, tmpQ, tmpS);
-        m.setMatrixAt(i, tmpM);
-        if (m.instanceColor) {
-          const j = ((Math.sin(p.x * 91.7 + p.z * 47.3) * 43758.5453) % 1 + 1) % 1;
-          const v = 0.90 + j * 0.20;
-          m.instanceColor.setXYZ(i, v * (1 - j * 0.05), v, v * (0.97 + j * 0.06));
-        }
-      });
+      tmpS.set(s, s, s);
+      tmpM.compose(tmpP, tmpQ, tmpS);
+      const j = ((Math.sin(p.x * 91.7 + p.z * 47.3) * 43758.5453) % 1 + 1) % 1;
+      const v = 0.90 + j * 0.20;
+      this.items.push({ x: p.x, z: p.z, keys, m: tmpM.elements.slice(),
+                        c: [v * (1 - j * 0.05), v, v * (0.97 + j * 0.06)] });
+      for (const k of keys) caps[k] = (caps[k] || 0) + 1;
+    }
+    // (re)build the meshes to fit
+    for (const key of Object.keys(this.meshes)) {
+      if (!caps[key]) { this.group.remove(this.meshes[key]); this.meshes[key].dispose(); delete this.meshes[key]; }
+    }
+    for (const [key, cap] of Object.entries(caps)) {
+      let m = this.meshes[key];
+      if (m && m.userData.cap >= cap && m.userData.cap < cap * 4 + 64) continue;
+      if (m) { this.group.remove(m); m.dispose(); }
+      const at = key.indexOf('@'), hash = key.indexOf('#');
+      let geo;
+      if (at > 0) geo = geos[key.slice(0, at) + (key.endsWith('@mid') ? ':mid' : ':far')];
+      else if (hash > 0) geo = vars[key.slice(0, hash)][+key.slice(hash + 1)];
+      else geo = geos[key];
+      m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : this.material, cap);
+      m.userData.cap = cap;
+      // Per-instance tint. Every conifer was the identical green, because one material with no
+      // instanceColor is one colour however many variants of the mesh you build.
+      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
+      // Only the near tier casts. A tree two hundred metres away casts a shadow you will never
+      // identify, and it costs a second draw of itself every frame to do it.
+      m.castShadow = this.shadows && key.indexOf('@') < 0;
+      m.receiveShadow = this.shadows;   // a forest where no tree shadows another is a flat cutout
+      m.frustumCulled = false;          // we decide, per instance, in cull()
+      m.name = 'prop:' + key;
+      this.group.add(m); this.meshes[key] = m;
+    }
+    this._last.set(1e9, 1e9, 1e9);
+    this.cull(this._viewer || new THREE.Vector3());
+  }
+
+  // Which props draw, and at which tier. Cheap enough to call every frame, but it only does the
+  // work when the viewer has moved far enough for an answer to have changed.
+  cull(viewerPos, force = false) {
+    if (!viewerPos) return;
+    this._viewer = this._viewer || new THREE.Vector3();
+    this._viewer.copy(viewerPos);
+    if (!force && this._last.distanceToSquared(viewerPos) < 144) return;   // 12 m
+    this._last.copy(viewerPos);
+    const counts = {};
+    for (const m of Object.values(this.meshes)) counts[m.name.slice(5)] = 0;
+    const vx = viewerPos.x, vz = viewerPos.z;
+    for (const it of this.items) {
+      const d = Math.hypot(it.x - vx, it.z - vz);
+      let key;
+      if (it.keys.length === 1) { if (d > TIER_PROP) continue; key = it.keys[0]; }
+      else if (d < TIER_NEAR) key = it.keys[0];
+      else if (d < TIER_MID) key = it.keys[1];
+      else if (d < TIER_FAR) key = it.keys[2];
+      else continue;
+      const m = this.meshes[key]; if (!m) continue;
+      const i = counts[key]++;
+      if (i >= m.userData.cap) { counts[key]--; continue; }
+      m.instanceMatrix.array.set(it.m, i * 16);
+      if (m.instanceColor) m.instanceColor.array.set(it.c, i * 3);
+    }
+    for (const [key, m] of Object.entries(this.meshes)) {
+      m.count = counts[key] || 0;
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
-      m.computeBoundingSphere();
     }
   }
 }

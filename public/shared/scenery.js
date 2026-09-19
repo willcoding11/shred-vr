@@ -27,7 +27,13 @@ export class Scenery {
     // has not CHANGED, and the game constructs Scenery already set to 'real' -- so the 4096 bump
     // in there never ran and the Real preset quietly loaded with a 2048 map. You could only get
     // the intended one by toggling the dropdown to Fast and back again.
-    shadowSize ??= quality === 'real' ? 4096 : 2048;
+    // 2048 and 1024, not 4096 and 2048. A 4096 square depth buffer is sixteen megapixels of
+    // shadow pass every frame, which on a standalone headset is a straight tax on everything else
+    // -- and it was only that big because the map had to cover distance. It does not any more:
+    // the sun shadowing over the whole mountain is baked into the terrain's vertex colours, so
+    // this map now only has to do the near field, and a tighter frustum at half the resolution is
+    // sharper there than the big one ever was.
+    shadowSize ??= quality === 'real' ? 2048 : 1024;
     this.scene = scene;
     this.sun = new THREE.DirectionalLight(0xffffff, 2.6);
     this.sun.castShadow = shadows;
@@ -37,7 +43,9 @@ export class Scenery {
       // a tighter frustum around the rider: ~7 cm/texel at 2048 instead of ~10 cm
       // Wider than the rider needs, because a 25 degree sun throws shadows two to three times
       // the height of whatever casts them, and the hill is now casting its own.
-      c.left = -110; c.right = 110; c.top = 110; c.bottom = -110; c.near = 1; c.far = 600;
+      // 70 m rather than 110: at 2048 that is 6.8 cm a texel, finer than the old 110 m box at
+      // 4096 managed, and the wide shadows it used to be stretched to cover are baked now.
+      c.left = -70; c.right = 70; c.top = 70; c.bottom = -70; c.near = 1; c.far = 420;
       // 0.6 m of normal bias is eleven texels at this resolution and frustum, which is why
       // shadows were detaching from tree trunks and lift towers and floating beside them.
       this.sun.shadow.bias = -0.0004; this.sun.shadow.normalBias = 0.08;
@@ -116,7 +124,7 @@ export class Scenery {
     this.sky.material.vertexShader = real ? realSkyVert : skyVert;
     this.sky.material.fragmentShader = real ? realSkyFrag : skyFrag;
     this.sky.material.needsUpdate = true;
-    if (this.sun.shadow) { this.sun.shadow.mapSize.set(real ? 4096 : 2048, real ? 4096 : 2048); this.sun.shadow.map?.dispose(); this.sun.shadow.map = null; }
+    if (this.sun.shadow) { this.sun.shadow.mapSize.set(real ? 2048 : 1024, real ? 2048 : 1024); this.sun.shadow.map?.dispose(); this.sun.shadow.map = null; }
     this.setEnv({});
     this.buildEnvironment();
   }

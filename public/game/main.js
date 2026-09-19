@@ -309,7 +309,7 @@ function applyQuality() {
   renderer.toneMappingExposure = real ? 1.0 : 0.95;
   scenery.setQuality(settings.quality);
   if (terrain) {
-    scene.remove(terrain.mesh); terrain.geometry.dispose(); terrain.material.dispose();
+    scene.remove(terrain.mesh); terrain.dispose();
     terrain = new Terrain(map, { shadows: settings.shadows, relief: settings.relief, quality: settings.quality });
     terrain.setSun(scenery.sunDir);
     scene.add(terrain.mesh);
@@ -445,12 +445,17 @@ renderer.setAnimationLoop(() => {
   flash = Math.max(0, flash - dt * 1.5);
   if (propSyncT > 0) { propSyncT -= dt; if (propSyncT <= 0) { props.sync(); rebuildMarkers(); } }
 
-  if (lifts) lifts.update(dt);
+
   // the snow shader needs to know where the sun is, or its sparkle and its blue shadows point
   // somewhere the light is not
   const su = terrain?.material?.userData?.realUniforms;
   if (su && scenery.sunDir) su.uSunDir.value.copy(scenery.sunDir);
   camera.getWorldPosition(tmpV);
+  if (lifts) lifts.update(dt, inXR && rider ? rider.boardPos : tmpV);
+  // Which terrain tiles draw, and at what detail. Keyed off the viewer rather than the camera,
+  // because in XR the camera three.js actually renders with is not this one.
+  terrain?.update(inXR && rider ? rider.boardPos : tmpV);
+  props?.cull(inXR && rider ? rider.boardPos : tmpV);
   scenery.update(dt, inXR ? rider.boardPos : tmpV, { position: tmpV });
   renderer.render(scene, camera);
 });
@@ -622,6 +627,45 @@ window.shredCam = (o = {}) => { Object.assign(preview, o); if (o.at === null) pr
 // Real preset from pictures alone kept producing confident statements about which mesh or which
 // shadow map was in use that turned out to be wrong in both directions.
 window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings });
+
+// A repeatable cost measurement, because "it looks smooth on a desktop GPU" is not a number and a
+// headset has about eleven milliseconds for two eyes. Walks a fixed set of viewpoints, lets the
+// tile and prop culling settle, and reports what the frame actually cost at each one.
+// Run from the console on the desktop preview:  await shredPerf()
+window.shredPerf = (points) => {
+  const pts = points || [
+    { name: 'start gate',           x: 225,  z: 120, dist: 5,   pitch: 0.10, ahead: 80 },
+    { name: 'summit, looking down', x: 210,  z: 95,  dist: 40,  pitch: 0.26, ahead: 200 },
+    { name: 'upper bowl',           x: 300,  z: 300, dist: 6,   pitch: 0.10, ahead: 90 },
+    { name: 'mid mountain',         x: 0,    z: 470, dist: 6,   pitch: 0.10, ahead: 90 },
+    { name: 'in the gully',         x: -160, z: 520, dist: 5,   pitch: 0.08, ahead: 60 },
+    { name: 'in the trees',         x: -306, z: 818, dist: 5,   pitch: 0.08, ahead: 50 },
+    { name: 'village',              x: 0,    z: 880, dist: 6,   pitch: 0.12, ahead: 80 },
+    { name: 'whole hill',           x: 0,    z: 600, dist: 260, pitch: 0.34, ahead: 260 },
+  ];
+  const keep = { ...preview };
+  const out = [];
+  // Frames are driven straight through the renderer rather than waited for. A hidden tab does not
+  // run requestAnimationFrame, and a measurement that only works when someone is watching is not
+  // a measurement.
+  for (const p of pts) {
+    Object.assign(preview, { at: { x: p.x, z: p.z }, dist: p.dist ?? 6, yaw: p.yaw ?? 0,
+      pitch: p.pitch ?? 0.12, spin: false, angle: 0, aim: p.aim ?? 1.4, ahead: p.ahead ?? 60 });
+    let draws = 0, tris = 0;
+    for (let i = 0; i < 3; i++) {
+      stepPreview(0.016);
+      camera.getWorldPosition(tmpV);
+      terrain?.update(tmpV);
+      props?.cull(tmpV, true);
+      renderer.render(scene, camera);
+      draws = renderer.info.render.calls; tris = renderer.info.render.triangles;
+    }
+    out.push({ where: p.name, draws, tris });
+  }
+  Object.assign(preview, keep);
+  console.table(out);
+  return out;
+};
 window.shredDebug = () => ({
   quality: settings.quality, shadows: settings.shadows,
   tone: renderer.toneMapping, exposure: renderer.toneMappingExposure,
@@ -634,6 +678,13 @@ window.shredDebug = () => ({
     return { min: +lo.toFixed(3), max: +hi.toFixed(3), mean: +(sum / terrain.bake.length).toFixed(3) }; })() : null,
   propMeshes: props ? props.group.children.map((m) => `${m.name}x${m.count}`) : [],
   mountainsPinned: scenery.mountains?.userData.pinned,
+  // what the last frame actually cost
+  draws: renderer.info.render.calls, tris: renderer.info.render.triangles,
+  chunks: terrain ? (() => {
+    let vis = 0; const lod = [0, 0, 0, 0];
+    for (const c of terrain.chunks) if (c.mesh.visible) { vis++; lod[c.lod]++; }
+    return { total: terrain.chunks.length, visible: vis, lod };
+  })() : null,
 });
 canvas.addEventListener('pointerdown', (e) => { if (!inXR) { preview.drag = true; preview.lastX = e.clientX; preview.lastY = e.clientY; } });
 window.addEventListener('pointerup', () => { preview.drag = false; });

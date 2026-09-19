@@ -34,6 +34,8 @@ export function createMap({ id, name, w = 96, h = 320, spacing = 2, slopeDeg = 1
     start: { x: 0, z: 12, yaw: 0 },
     finish: { x: 0, z: (h - 8) * spacing, w: 30 },
     props: [],
+    lifts: [],
+    freeride: false,
     env: { timeOfDay: 0.35, fog: 0.35, snowfall: 0.2, snowType: 'groomed', wind: 0.2 },
   };
   resetToBase(map);
@@ -80,6 +82,8 @@ export function deserializeMap(json) {
   out.base ||= { h0: heights[0] || 0, slopeDeg: 14 };
   out.start ||= { x: 0, z: 12, yaw: 0 };
   out.finish ||= { x: 0, z: (m.size.h - 8) * m.spacing, w: 30 };
+  out.lifts ||= [];
+  out.freeride = !!m.freeride;      // no gates, no finish, no clock: an open hill
   return out;
 }
 export function cloneMap(map) {

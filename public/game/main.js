@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { Terrain } from '../shared/terrain.js';
 import { PropRenderer, makeStartGate, makeFinishBanner } from '../shared/props.js';
 import { Scenery } from '../shared/scenery.js';
+import { LiftRenderer, baseNear, seatAt, unloadSpot, LIFT } from '../shared/lifts.js';
 import { LiveClient } from '../shared/live.js';
 import { deserializeMap, applyRegion, PROP_TYPES, bounds, lowestHeight } from '../shared/mapformat.js';
 import { Rider, SNOW } from './physics.js';
@@ -62,9 +63,10 @@ const spray = makeSpray(); scene.add(spray.points);
 // ---------------- state ----------------
 let map = null, terrain = null, props = null, startGate = null, finishBanner = null, finishWidth = -1;
 let rider = null;
-let spatial = new Map(), gates = [];
+let spatial = new Map();
+let lifts = null, liftRide = null, liftDwell = 0;
 let phase = 'idle';                 // idle (not in VR) | riding | finished
-let runTime = 0, timerOn = false, checkpoint = null, best = null, missedFinish = false;
+let runTime = 0, timerOn = false, checkpoint = null, best = null;
 let flash = 0;
 let inXR = false, mapsList = [], telemetryT = 0, propSyncT = 0;
 let prevX = 0, prevZ = 0;
@@ -94,6 +96,9 @@ function applyMap(m, keepPosition = false) {
   else terrain.setMap(map);
   if (!props) { props = new PropRenderer(map, { shadows: settings.shadows }); scene.add(props.group); }
   else props.setMap(map);
+  if (lifts) { scene.remove(lifts.group); lifts.dispose(); }
+  lifts = new LiftRenderer(map, { shadows: settings.shadows });
+  scene.add(lifts.group);
   rebuildMarkers(); rebuildSpatial();
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
   scenery.setGround(lowestHeight(map));
@@ -114,17 +119,13 @@ function applyMap(m, keepPosition = false) {
 function rebuildMarkers() {
   if (!startGate) { startGate = makeStartGate(); scene.add(startGate); }
   placeOnGround(startGate, map.start.x, map.start.z, map.start.yaw || 0);
+  startGate.visible = !map.freeride;
   if (!finishBanner || finishWidth !== map.finish.w) {
     if (finishBanner) { scene.remove(finishBanner); finishBanner.geometry.dispose(); finishBanner.material.dispose(); }
     finishBanner = makeFinishBanner(map.finish.w); finishWidth = map.finish.w; scene.add(finishBanner);
   }
   placeOnGround(finishBanner, map.finish.x, map.finish.z, map.finish.yaw || 0);
-  const prev = gates;
-  gates = map.props.filter((p) => p.t === 'gate').map((p) => {
-    const old = prev.find((g) => Math.abs(g.x - p.x) < 0.02 && Math.abs(g.z - p.z) < 0.02);
-    return { x: p.x, z: p.z, r: p.r || 0, w: PROP_TYPES.gate.width, passed: !!old?.passed, missed: !!old?.missed };
-  });
-  $('gatesTotal').textContent = gates.length;
+  finishBanner.visible = !map.freeride;
 }
 function placeOnGround(obj, x, z, yaw) { obj.position.set(x, terrain.heightAt(x, z), z); obj.rotation.y = yaw; obj.castShadow = true; }
 
@@ -162,14 +163,46 @@ function applyRealism() {
   rider.t.noseDigScrub = easy ? 0.7 : 1.2;
 }
 
+// ---------------- chairlifts ----------------
+// Stopping anywhere near a base station gets you scooped up, because hunting for a "board" button
+// while standing in a lift queue is not what anyone wants to be doing.
+function boardLift(line) {
+  liftRide = { line, t: 0.004 };
+  phase = 'lift';
+  spray.emit(rider, 0);
+  hud.message(line.name, 'Trigger skips you to the top', 4);
+}
+
+function stepLift(dtReal) {
+  const L = liftRide;
+  if (controls.pressed.trigger[0] || controls.pressed.trigger[1] || controls.pressed.a || controls.pressed.x) L.t = 1;
+  else L.t += (LIFT.speed / L.line.len) * dtReal;
+  if (L.t >= 1) { unloadLift(); return; }
+  seatAt(L.line, L.t, tmpV);
+  // Put your head where a seated person's head would be and let your feet -- and the board --
+  // hang under the chair, which is what they do.
+  rig.position.set(tmpV.x, tmpV.y + 0.78 - controls.head.pos.y, tmpV.z);
+  rig.rotation.set(0, 0, 0);
+  legY = null;
+}
+
+function unloadLift() {
+  const line = liftRide.line; liftRide = null;
+  const spot = unloadSpot(line, terrain);
+  rider.reset(spot.x, spot.z, 0, controls.pose);
+  legY = null; liftDwell = -2;             // do not get straight back on the one you just left
+  phase = 'riding';
+  hud.message('Top of ' + line.name, '', 2);
+}
+
 // ---------------- run control ----------------
 function resetRun(toCheckpoint = false) {
   if (!map || !rider) return;
   const cp = toCheckpoint && checkpoint ? checkpoint : { x: map.start.x, z: map.start.z, yaw: map.start.yaw || 0 };
   rider.reset(cp.x, cp.z, cp.yaw, controls.pose);
   legY = null;
-  prevX = cp.x; prevZ = cp.z; missedFinish = false;
-  if (!toCheckpoint) { runTime = 0; timerOn = false; for (const g of gates) { g.passed = g.missed = false; } checkpoint = null; }
+  prevX = cp.x; prevZ = cp.z;
+  if (!toCheckpoint) { runTime = 0; timerOn = false; checkpoint = null; }
   phase = inXR ? 'riding' : 'idle';
   if (inXR) hud.message(toCheckpoint ? 'Back on your feet' : map.name, 'Point the nose downhill, or shove a dug-in edge to scoot off the mark', 4);
 }
@@ -177,14 +210,10 @@ function resetRun(toCheckpoint = false) {
 function finished() {
   phase = 'finished'; timerOn = false;
   audio.finish();
-  const missed = gates.filter((g) => g.missed).length;
-  const penalty = missed * 2 + (missedFinish ? 5 : 0);
-  const total = runTime + penalty;
+  const total = runTime;
   const isBest = best == null || total < best;
   if (isBest) { best = total; localStorage.setItem('shred.best.' + map.id, String(best)); }
-  const sub = [missed ? `${missed} gate${missed > 1 ? 's' : ''} missed (+${missed * 2}s)` : '',
-    missedFinish ? 'outside the banner (+5s)' : ''].filter(Boolean).join(' · ') || 'Clean run';
-  hud.message(`Finish ${fmtTime(total)}${isBest ? ' · New best!' : ''}`, sub, 6);
+  hud.message(`Finish ${fmtTime(total)}${isBest ? ' · New best!' : ''}`, '', 6);
 }
 
 // ---------------- live sync ----------------
@@ -387,6 +416,7 @@ renderer.setAnimationLoop(() => {
   flash = Math.max(0, flash - dt * 1.5);
   if (propSyncT > 0) { propSyncT -= dt; if (propSyncT <= 0) { props.sync(); rebuildMarkers(); } }
 
+  if (lifts) lifts.update(dt);
   camera.getWorldPosition(tmpV);
   scenery.update(dt, inXR ? rider.boardPos : tmpV, { position: tmpV });
   renderer.render(scene, camera);
@@ -421,7 +451,7 @@ function stepVR(dtReal, now) {
   } else {
     if (controls.pressed.trigger[0] || controls.pressed.trigger[1]) { if (controls.calibrate()) { calibrated = true; placeHud(); hud.message('Calibrated', '', 1.2); } }
     if (controls.pressed.a || controls.pressed.x) {
-      // tap once for the last gate, twice quickly to start the run over
+      // tap once to go back to the start, twice quickly to reset the clock too
       if (now - lastGateTap < 500) { resetRun(); lastGateTap = 0; }
       else { resetRun(true); lastGateTap = now; }
     }
@@ -435,6 +465,8 @@ function stepVR(dtReal, now) {
       bootMarks[i].quaternion.setFromUnitVectors(BOOT_AXIS, controls.pose.up);
     }
   }
+
+  if (phase === 'lift') { stepLift(dtReal); }
 
   // physics
   if (phase === 'riding' || phase === 'finished') {
@@ -452,18 +484,27 @@ function stepVR(dtReal, now) {
       handleEvents();
       if (phase === 'riding') { checkCollisions(); if (phase !== 'riding') break; }
     }
-    if (phase === 'riding') { checkGates(); checkBounds(); }
-    else if (phase === 'finished') checkBounds();
-    if (!timerOn && rider.speed > 1 && rider.boardPos.z > map.start.z + 4) timerOn = true;
-    if (timerOn && phase === 'riding') runTime += dtReal;
+    if (phase === 'riding' || phase === 'finished') checkBounds();
+    if (phase === 'riding' && !map.freeride && prevZ < map.finish.z && rider.boardPos.z >= map.finish.z) finished();
+    if (!map.freeride) {
+      if (!timerOn && rider.speed > 1 && rider.boardPos.z > map.start.z + 4) timerOn = true;
+      if (timerOn && phase === 'riding') runTime += dtReal;
+    }
+    // Stop near a base station and a chair picks you up.
+    if (phase === 'riding' && lifts && lifts.lines.length) {
+      if (rider.speed < 3.2 && baseNear(lifts.lines, rider.boardPos.x, rider.boardPos.z)) liftDwell += dtReal;
+      else liftDwell = Math.min(0, liftDwell);
+      if (liftDwell > 0.5) { liftDwell = 0; boardLift(baseNear(lifts.lines, rider.boardPos.x, rider.boardPos.z)); }
+    }
+    prevX = rider.boardPos.x; prevZ = rider.boardPos.z;
     spray.emit(rider, dt);
+    if (liftDwell < 0) liftDwell = Math.min(0, liftDwell + dtReal);
   }
 
   // the rig IS the rider; the board is drawn where the hands are
   // The rig NEVER rotates. Your heading is your body's heading, in the room, and a turn is
   // something you make by physically swinging the board round. Nothing spins the world for you.
-  rig.position.copy(rider.pos);
-  rig.rotation.set(0, 0, 0);
+  if (phase !== 'lift') { rig.position.copy(rider.pos); rig.rotation.set(0, 0, 0); }
 
   // Legs. The heightfield is bilinear on a 2 m grid, so it has a crease at every grid line, and
   // a rigid rider delivers one of those straight into the player's head several times a second.
@@ -479,6 +520,7 @@ function stepVR(dtReal, now) {
   // is meant to remove straight into the view -- and the faster you go, the more of it there is.
   if (legY === null) { legY = rider.pos.y; legVy = rider.vel.y; }
   legVy += (rider.vel.y - legVy) * Math.min(1, dtReal * 7);
+  if (phase === 'lift') { legY = rider.pos.y; legVy = 0; }
   legY += legVy * dtReal;
   const rate = rider.grounded && !rider.standing ? settings.legRate : 30;
   legY += (rider.pos.y - legY) * Math.min(1, dtReal * rate);
@@ -486,8 +528,8 @@ function stepVR(dtReal, now) {
   const travel = 0.09 + Math.min(0.10, rider.speed * 0.005);
   const sag = THREE.MathUtils.clamp(rider.pos.y - legY, -travel, travel);
   legY = rider.pos.y - sag;
-  rig.position.y = rider.pos.y - sag;
-  bootSag = sag;
+  if (phase !== 'lift') rig.position.y = rider.pos.y - sag;
+  bootSag = phase === 'lift' ? 0 : sag;
 
   // DRAW from the unsmoothed pose. The physics reads the smoothed one, because a 60 ms filter
   // is what keeps tracking noise out of the forces, but drawing through that same filter puts
@@ -497,7 +539,7 @@ function stepVR(dtReal, now) {
   if (draw.valid) {
     boardGroup.visible = true;
     boardGroup.position.copy(draw.center);
-    boardGroup.position.y += sag;                 // ...so the board is still on the snow
+    if (phase !== 'lift') boardGroup.position.y += sag;   // ...so the board is still on the snow
     const side = tmpV.crossVectors(draw.up, draw.nose).normalize();
     boardGroup.quaternion.setFromRotationMatrix(_basis.makeBasis(side, draw.up, draw.nose));
   } else boardGroup.visible = false;
@@ -566,8 +608,6 @@ function tuckAmount() {
 function hudState() {
   return {
     speed: rider ? rider.speed : 0, time: runTime,
-    gates: gates.filter((g) => g.passed).length, gatesTotal: gates.length,
-    missed: gates.filter((g) => g.missed).length,
     edge: rider ? rider.edgeDeg : 0, g: rider ? rider.lateralG : 0,
     air: rider && !rider.grounded ? rider.airTime : 0, best, slow: false,
   };
@@ -611,30 +651,14 @@ function checkCollisions() {
   }
 }
 
-function checkGates() {
-  const p = rider.boardPos;
-  for (const g of gates) {
-    if (g.passed || g.missed) continue;
-    const c = Math.cos(g.r), s = Math.sin(g.r);
-    const lx = (p.x - g.x) * c - (p.z - g.z) * s, lz = (p.x - g.x) * s + (p.z - g.z) * c;
-    const plx = (prevX - g.x) * c - (prevZ - g.z) * s, plz = (prevX - g.x) * s + (prevZ - g.z) * c;
-    if (plz < 0 && lz >= 0 && Math.abs((lx + plx) / 2) <= g.w / 2) {
-      g.passed = true; checkpoint = { x: g.x, z: g.z + 1, yaw: g.r }; audio.gate(); hud.message('Gate', '', 0.6);
-    }
-    if (lz > 4 && !g.passed) { g.missed = true; audio.miss(); hud.message('Missed gate  +2s', '', 1.2); }
-  }
-  const f = map.finish;
-  if (prevZ < f.z && p.z >= f.z) { missedFinish = Math.abs(p.x - f.x) > f.w / 2 + 1; finished(); }
-  prevX = p.x; prevZ = p.z;
-}
-
 function checkBounds() {
   const b = bounds(map), p = rider.boardPos, m = 2.5;
   if (p.x < b.minX + m) { rider.pos.x += (b.minX + m) - p.x; rider.vel.x = Math.abs(rider.vel.x) * 0.3; }
   if (p.x > b.maxX - m) { rider.pos.x -= p.x - (b.maxX - m); rider.vel.x = -Math.abs(rider.vel.x) * 0.3; }
   if (p.z < b.minZ + 1) { rider.pos.z += (b.minZ + 1) - p.z; rider.vel.z = Math.abs(rider.vel.z) * 0.3; }
   if (p.z > b.maxZ - m) {
-    if (phase === 'finished') { rider.pos.z -= p.z - (b.maxZ - m); rider.vel.set(0, 0, 0); return; }
+    // An open hill has no end to fall off: you get pushed back in, like every other edge.
+    if (map.freeride || phase === 'finished') { rider.pos.z -= p.z - (b.maxZ - m); rider.vel.z = -Math.abs(rider.vel.z) * 0.3; return; }
     hud.message('End of the run', '', 1.5); resetRun();
   }
 }
@@ -642,7 +666,6 @@ function checkBounds() {
 function updateDomHud(s) {
   $('speed').textContent = Math.round(s.speed * 3.6);
   $('time').textContent = fmtTime(s.time);
-  $('gates').textContent = s.gates; $('missed').textContent = s.missed ? `· ${s.missed} missed` : '';
   const e = Math.max(-1, Math.min(1, s.edge / 60));
   $('edgeFill').style.left = e < 0 ? `${50 + e * 50}%` : '50%';
   $('edgeFill').style.width = `${Math.abs(e) * 50}%`;
@@ -732,7 +755,7 @@ window.__shred = {
       carving: rider.carving, skidding: rider.skidding, standing: rider.standing,
       noseGap: rider.noseGap, tailGap: rider.tailGap,
       turnRadius: Number.isFinite(rider.turnRadius) ? rider.turnRadius : null,
-      time: runTime, gates: gates.filter((g) => g.passed).length, missed: gates.filter((g) => g.missed).length,
+      time: runTime,
       map: map?.id, inXR,
     } : null;
   },

@@ -21,56 +21,37 @@ export class CanvasPanel {
   commit() { this.texture.needsUpdate = true; }
 }
 
+// The in-world panel. It used to sit in front of you the whole time showing speed, clock, gates
+// and an edge-angle bar, which is a lot of instrumentation to read while trying to feel a board
+// under your feet -- and the one thing you are meant to be reading is the snow. It now shows
+// nothing at all until there is something to say, and disappears again when there isn't.
 export class Hud {
   constructor() {
-    this.panel = new CanvasPanel(640, 300, 0.62);
+    this.panel = new CanvasPanel(640, 150, 0.52);
     this.mesh = this.panel.mesh;
+    this.mesh.visible = false;
     this.msg = ''; this.msgUntil = 0; this.sub = '';
-    this.state = { speed: 0, time: 0, gates: 0, gatesTotal: 0, missed: 0, edge: 0, g: 0, air: 0, best: null };
-    this._last = 0;
+    this.state = {};
+    this._last = 0; this._drawn = null;
   }
   message(text, sub = '', seconds = 3) { this.msg = text; this.sub = sub; this.msgUntil = performance.now() + seconds * 1000; }
   update(s, now) {
     Object.assign(this.state, s);
-    if (now - this._last < 1000 / 20) return;   // 20 fps redraw is plenty
-    this._last = now;
-    const { g } = this.panel, W = 640, H = 300;
+    const live = this.msg && now < this.msgUntil;
+    const key = live ? this.msg + '\n' + this.sub : '';
+    this.mesh.visible = !!key;
+    if (!key || key === this._drawn) return;
+    this._drawn = key;
+    const { g } = this.panel, W = 640, H = 150;
     this.panel.clear();
-    g.fillStyle = 'rgba(8,14,26,0.62)'; roundRect(g, 0, 0, W, H, 28); g.fill();
-    g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 2; roundRect(g, 1, 1, W - 2, H - 2, 27); g.stroke();
-    const st = this.state;
-    // speed
-    g.fillStyle = '#ffffff'; g.font = '700 92px Inter, system-ui, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
-    g.fillText(Math.round(st.speed * 3.6).toString(), 34, 118);
-    g.font = '600 26px Inter, system-ui, sans-serif'; g.fillStyle = 'rgba(255,255,255,0.65)';
-    g.fillText('km/h', 42 + measure(g, Math.round(st.speed * 3.6).toString(), '700 92px Inter, system-ui, sans-serif'), 118);
-    // time
-    g.textAlign = 'right'; g.fillStyle = '#ffffff'; g.font = '700 56px Inter, system-ui, sans-serif';
-    g.fillText(fmtTime(st.time), W - 34, 96);
-    g.font = '600 22px Inter, system-ui, sans-serif'; g.fillStyle = 'rgba(255,255,255,0.6)';
-    g.fillText(st.best != null ? 'BEST ' + fmtTime(st.best) : 'TIME', W - 34, 126);
-    // gates
-    g.textAlign = 'left'; g.font = '600 24px Inter, system-ui, sans-serif'; g.fillStyle = 'rgba(255,255,255,0.75)';
-    g.fillText(`GATES ${st.gates}/${st.gatesTotal}` + (st.missed ? `  ·  missed ${st.missed}` : ''), 34, 168);
-    // edge bar: heel <-> toe
-    const bx = 34, by = 196, bw = W - 68, bh = 18;
-    g.fillStyle = 'rgba(255,255,255,0.12)'; roundRect(g, bx, by, bw, bh, 9); g.fill();
-    const e = Math.max(-1, Math.min(1, st.edge / 70));
-    const cx = bx + bw / 2, ex = cx + e * (bw / 2 - 10);
-    g.fillStyle = e > 0 ? '#38bdf8' : '#f472b6';
-    roundRect(g, Math.min(cx, ex) - 4, by + 2, Math.abs(ex - cx) + 8, bh - 4, 7); g.fill();
-    g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = '600 18px Inter, system-ui, sans-serif';
-    g.fillText('HEEL', bx, by + 44); g.textAlign = 'right'; g.fillText('TOE', bx + bw, by + 44);
-    g.textAlign = 'center';
-    const extra = st.slow ? '  ·  SLOW-MO' : st.air > 0.15 ? `  ·  AIR ${st.air.toFixed(1)}s` : '';
-    g.fillText(`${Math.abs(st.edge).toFixed(0)}°  ·  ${Math.abs(st.g).toFixed(1)} g` + extra, cx, by + 44);
-    // message
-    if (this.msg && now < this.msgUntil) {
-      g.fillStyle = 'rgba(255,255,255,0.95)'; g.font = '800 34px Inter, system-ui, sans-serif'; g.textAlign = 'center';
-      g.fillText(this.msg, W / 2, 278);
-    } else if (this.sub) {
-      g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = '600 20px Inter, system-ui, sans-serif'; g.textAlign = 'center';
-      g.fillText(this.sub, W / 2, 278);
+    g.fillStyle = 'rgba(8,14,26,0.62)'; roundRect(g, 0, 0, W, H, 26); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 2; roundRect(g, 1, 1, W - 2, H - 2, 25); g.stroke();
+    g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.fillStyle = 'rgba(255,255,255,0.96)'; g.font = '800 42px Inter, system-ui, sans-serif';
+    g.fillText(this.msg, W / 2, this.sub ? 72 : 92);
+    if (this.sub) {
+      g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = '600 24px Inter, system-ui, sans-serif';
+      g.fillText(this.sub, W / 2, 112);
     }
     this.panel.commit();
   }

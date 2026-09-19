@@ -65,7 +65,12 @@ export class Terrain {
     // The hill shades ITSELF. Without this a roller has no shadow of its own, and the only
     // shadows on the whole slope come from trees -- which is most of why it reads as a flat
     // white sheet. With a low sun every lip and gully throws one.
-    this.mesh.castShadow = shadows;
+    //
+    // Except on a big open map. The terrain is one mesh with culling off, so the shadow pass
+    // resubmits every triangle of it: at a square kilometre that is 230k triangles drawn twice a
+    // frame, on a headset. Past that size the relief shading and the trees carry it instead.
+    const cells = this.map.size.w * this.map.size.h;
+    this.mesh.castShadow = shadows && cells < 90000;
     this.mesh.frustumCulled = false;
     this.colorMode = 'snow';   // 'snow' | 'slope' (editor overlay: steepness bands)
     this.rebuild();

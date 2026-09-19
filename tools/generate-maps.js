@@ -216,7 +216,6 @@ function glade(map, rand, { z0, z1, cx = () => 0, halfWidth = 40, inner = 0, den
     place(map, types[Math.floor(rand() * types.length)], x, z, { s: 0.8 + rand() * 0.8, r: rand() * 6.28 });
   }
 }
-function gates(map, list) { for (const [x, z, r] of list) place(map, 'gate', x, z, { r: r || 0 }); }
 
 // Anything that crashes a rider has no business standing on ground too steep to ride: those
 // are cliff faces and chute walls, where a tree is both implausible and unfair.
@@ -314,7 +313,7 @@ function firstTracks() {
   // across the berm.
   // Solved for a ~45 m radius, which is what a green rider can hold at this map's speeds.
   // Starting on the toe side puts the widest gate on the berm at z~405.
-  gates(map, slalomLine({ z0: 88, zEnd: 552, swing0: 9, swing1: 19, targetR: 45, startSide: 1 }));
+  // (gates removed: the game is free-ride now)
   for (let z = 90; z < 560; z += 90) { place(map, 'flag', -30, z); place(map, 'flag', 30, z); }
   for (let z = 70; z <= 560; z += 100) { place(map, 'lamp', -46, z); place(map, 'lamp', 46, z); }
   startArea(map, { z: 14, x: 0, width: 24 });
@@ -384,7 +383,7 @@ function gladeRun() {
     const c = center(za), side = Math.sign(c) || 1;
     return [+(c + side * 11).toFixed(2), za];       // on the berm face at each apex
   });
-  gates(map, [...apexGates, [+center(624).toFixed(2), 624], [+center(KICK_Z).toFixed(2), 668]]);
+  // (gates removed: the game is free-ride now)
   for (let z = 100; z < 760; z += 80) place(map, 'flag', center(z) + 17, z);
   for (let z = 150; z < 720; z += 110) place(map, 'flag', center(z) - 17, z);
   // Scenery rocks sit out on the wall, clear of any line a rider drifting wide would take.
@@ -518,14 +517,7 @@ function ridgeLine() {
     const c = chuteCenter(z), half = 9.5 + fbm(z * 0.05 + 11.1, 3.3, 2) * 2;
     for (const side of [-1, 1]) place(map, rand() < 0.5 ? 'boulder' : 'rock', c + side * (half + 14 + rand() * 6), z, { s: 1 + rand() * 0.7, r: rand() * 3 });
   }
-  gates(map, [
-    // upper face: wide radius, following the swing rather than cutting across it
-    ...slalomLine({ z0: 96, zEnd: 232, swing0: 12, swing1: 15, targetR: 70, cx: chuteCenter, startSide: -1 }),
-    // shelf and mogul field
-    ...slalomLine({ z0: 340, zEnd: 545, swing0: 12, swing1: 15, targetR: 55, startSide: 1 }),
-    // chute: straight down the floor, never on a wall
-    [+chuteCenter(604).toFixed(2), 604], [+chuteCenter(668).toFixed(2), 668], [4, 728],
-  ]);
+  // (gates removed: the game is free-ride now)
   for (const z of [100, 160, 350, 400]) { place(map, 'flag', -34, z); place(map, 'flag', 34, z); }
   for (let z = 566; z < 700; z += 22) place(map, 'flag', chuteCenter(z) + 8, z);
   place(map, 'sign', 40, 420, { r: Math.PI });
@@ -611,12 +603,7 @@ function cornice() {
   place(map, 'sign', 34, LIP - 26, { r: Math.PI });
   for (const x of [-40, 40]) for (let z = 400; z <= 520; z += 24) place(map, 'flag', x, z);
 
-  gates(map, [
-    ...slalomLine({ z0: 104, zEnd: 206, swing0: 11, swing1: 14, targetR: 62, cx: center, startSide: -1 }),
-    [0, 268],                                                  // line up straight for the lip
-    [0, 508],                                                  // and through the landing
-    ...slalomLine({ z0: 570, zEnd: 756, swing0: 12, swing1: 15, targetR: 58, cx: center, startSide: 1 }),
-  ]);
+  // (gates removed: the game is free-ride now)
   finish(map, 852, 60);                      // the landing dumps you out wide, so the line is wide
   startArea(map, { z: 10, x: 0, width: 22 });
   finishArea(map, { z: 852, x: 0, w: 60 });
@@ -715,12 +702,7 @@ function spineLine() {
   for (let z = 120; z < 420; z += 26) { place(map, 'flag', spine(z) - 7, z); place(map, 'flag', spine(z) + 7, z); }
   place(map, 'sign', 26, 86, { r: Math.PI });
 
-  gates(map, [
-    [+spine(140).toFixed(2), 140], [+spine(214).toFixed(2), 214], [+spine(290).toFixed(2), 290],
-    [+spine(366).toFixed(2), 366], [+spine(470).toFixed(2), 470], [+spine(560).toFixed(2), 560],
-    [+spine(640).toFixed(2), 640],
-    ...slalomLine({ z0: 700, zEnd: 844, swing0: 11, swing1: 14, targetR: 54, startSide: -1 }),
-  ]);
+  // (gates removed: the game is free-ride now)
   finish(map, 904, 64);                      // the bowl is still funnelling here
   startArea(map, { z: 10, x: 0, width: 20 });
   finishArea(map, { z: 904, x: 0, w: 64 });
@@ -780,12 +762,7 @@ function couloir() {
   place(map, 'sign', 22, 80, { r: Math.PI });
   place(map, 'sign', -22, 296, { r: Math.PI });
 
-  gates(map, [
-    [+cx(130).toFixed(2), 130], [+cx(200).toFixed(2), 200], [+cx(268).toFixed(2), 268],
-    [+cx(340).toFixed(2), 340], [+cx(420).toFixed(2), 420], [+cx(500).toFixed(2), 500],
-    [+cx(590).toFixed(2), 590], [+cx(668).toFixed(2), 668],
-    ...slalomLine({ z0: 716, zEnd: 812, swing0: 10, swing1: 13, targetR: 50, startSide: 1 }),
-  ]);
+  // (gates removed: the game is free-ride now)
   finish(map, 836, 78);                      // the apron fans out, and a hot exit fans out with it
   startArea(map, { z: 10, x: 0, width: 18 });
   finishArea(map, { z: 836, x: 0, w: 78 });
@@ -793,7 +770,165 @@ function couloir() {
   return map;
 }
 
-const maps = [firstTracks(), gladeRun(), ridgeLine(), cornice(), spineLine(), couloir()];
+// A forest over a region rather than along a line, for a hill that has no centreline.
+function forest(map, rand, { x0, x1, z0, z1, density = 0.004, types = ['pine', 'fir'], minGap = 9, keepOut = null, maxSlope = 34 }) {
+  const placed = [];
+  const n = Math.round((x1 - x0) * (z1 - z0) * density);
+  for (let i = 0; i < n * 3 && placed.length < n; i++) {
+    const x = x0 + rand() * (x1 - x0), z = z0 + rand() * (z1 - z0);
+    if (keepOut && keepOut(x, z)) continue;
+    if (slopeDegAt(map, x, z) > maxSlope) continue;
+    let ok = true;
+    for (const p of placed) if ((p[0] - x) ** 2 + (p[1] - z) ** 2 < minGap * minGap) { ok = false; break; }
+    if (!ok) continue;
+    placed.push([x, z]);
+    place(map, types[Math.floor(rand() * types.length)], x, z, { s: 0.75 + rand() * 0.8, r: rand() * 6.28 });
+  }
+}
+
+// ---------------- MAP 7: Alpine Bowl (open) ----------------
+// Not a run. A square kilometre of mountain with a summit ridge, three faces separated by two
+// spurs, a gully cut down the west side and a base area at the bottom, plus two chairlifts so you
+// can get back up without anyone teleporting you. There are no gates, no finish line and no
+// clock: the whole point is that you pick a line and go, and then pick a different one.
+function alpineBowl() {
+  const map = createMap({ id: 'alpine-bowl', name: 'Alpine Bowl', w: 340, h: 340, spacing: 3, slopeDeg: 0, h0: 0, difficulty: 'black' });
+  map.description = 'An open mountain. Three faces off one summit ridge, a gully, cliffs, and two chairlifts to get back up.';
+  map.order = 0;
+  map.freeride = true;
+  map.env = { ...map.env, timeOfDay: 0.28, fog: 0.3, snowfall: 0.15, snowType: 'groomed', wind: 0.25 };
+  const rand = rnd(2024);
+  const { w, h } = map.size, sp = map.spacing;
+  const SPAN = (h - 1) * sp;                  // 1017 m from the summit ridge to the back of the base
+
+  // The long profile, integrated from a grade the same way a single run is, so the mountain
+  // steepens and eases the way a real one does instead of being a uniform ramp.
+  const grade = (z) => (
+    z < 50 ? 5                                 // the summit shoulder you step off the lift onto
+      : z < 140 ? 5 + ((z - 50) / 90) * 27
+        : z < 400 ? 32                         // the upper faces: this is the steep part
+          : z < 470 ? 32 - ((z - 400) / 70) * 14
+            : z < 520 ? 18                     // a bench across the middle of the hill
+              : z < 760 ? 27                   // lower faces
+                : z < 860 ? 27 - ((z - 760) / 100) * 15
+                  : z < 940 ? 12
+                    : 5);                      // the base area
+  const prof = new Float32Array(h);
+  { let y = 330; for (let z = 0; z < h; z++) { prof[z] = y; y -= deg(grade(z * sp)) * sp; } }
+  const centre = (wz) => prof[Math.min(h - 1, Math.max(0, Math.round(wz / sp)))];
+
+  // Two spurs running down the hill split it into three faces. Between them the ground dishes out
+  // into bowls, so each face has its own shape rather than all of them being the same plane.
+  const spur = (wx, wz, at, width, height) => {
+    const fadeZ = Math.min(1, Math.max(0, (wz - 70) / 90)) * (1 - smooth01((wz - 700) / 180));
+    const d = (wx - at) / width;
+    return Math.exp(-d * d) * height * fadeZ;
+  };
+  const gully = (wx, wz) => {
+    // A cut down the west side, deep enough in the middle to ride like a natural halfpipe.
+    if (wz < 150 || wz > 800) return 0;
+    const cx = -250 + Math.sin((wz - 150) / 210) * 26;
+    const env = Math.min(1, (wz - 150) / 70, (800 - wz) / 90);
+    const d = Math.abs(wx - cx) / 34;
+    return -Math.exp(-d * d) * 17 * env;
+  };
+
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      const [wx, wz] = gridToWorld(map, x, z);
+      let y = centre(wz);
+      // the hill dishes across its width, so the middle of each face is the natural line
+      y += Math.pow(Math.abs(wx) / 500, 2.1) * 70;
+      y += spur(wx, wz, -150, 62, 30) + spur(wx, wz, 160, 58, 26);
+      y += gully(wx, wz);
+      // and the summit ridge itself stands above everything behind it
+      y += smooth01((70 - wz) / 70) * (28 + Math.abs(wx) * 0.05);
+      map.heights[z * w + x] = y;
+    }
+  }
+
+  addNoise(map, { amp: 2.2, scale: 0.006, oct: 4, seed: 1.3 });
+  addNoise(map, { amp: 0.8, scale: 0.02, oct: 3, seed: 7.7 });
+  addNoise(map, { amp: 0.25, scale: 0.07, oct: 2, seed: 4.2 });
+
+  // ---- features you can go looking for ----
+  // A cliff band across the east face, with a rounded roll-in at either end.
+  {
+    const CZ = 300;
+    for (let z = 0; z < h; z++) {
+      const wz = z * sp; if (wz < CZ - 30) continue;
+      for (let x = 0; x < w; x++) {
+        const [wx] = gridToWorld(map, x, z);
+        if (wx < 40 || wx > 330) continue;
+        const drop = 7 * (1 - smooth01((Math.abs(wx - 185) - 80) / 55));
+        if (drop < 0.05) continue;
+        const cz = CZ + fbm(wx * 0.011 + 5.1, 2.2, 3) * 9;
+        map.heights[z * w + x] -= drop * smooth01((wz - cz) / 5);
+      }
+    }
+  }
+  // A mogul field on the lower middle face.
+  for (let row = 0; row * 10 < 150; row++) {
+    const z = 560 + row * 10;
+    for (let col = -8; col <= 8; col++) {
+      const px = -40 + col * 7 + (row % 2 ? 3.5 : 0) + (rand() - 0.5) * 3;
+      const pz = z + (rand() - 0.5) * 3;
+      if (rand() < 0.2) continue;
+      applyBrush(map, { tool: 'raise', x: px, z: pz, radius: 4.4 + rand() * 1.8, strength: 1, dt: 0.07 + rand() * 0.04, falloff: 0.05 });
+    }
+  }
+  // Rollers down the west face, and a few natural hits scattered where they fall.
+  addRollers(map, { z0: 180, z1: 420, wavelength: 52, amp: 1.6 });
+  for (const [kx, kz, r, kh] of [[-90, 250, 15, 3.4], [95, 430, 13, 2.8], [-200, 560, 12, 2.4], [30, 690, 16, 3.6], [-320, 380, 11, 2.2]]) {
+    kicker(map, kx, kz, { radius: r, height: kh });
+  }
+  smoothAll(map, 1, (x, z) => (z > 880 ? 1 : 0));          // the base area is groomed flat
+
+  // ---- lifts ----
+  // The summit chair runs the full height of the hill up the east side of the middle face, so it
+  // is never over the best line. The bowl chair is a shorter one back up the west side.
+  map.lifts = [
+    { id: 'summit', name: 'Summit Express', base: { x: 70, z: 930 }, top: { x: 40, z: 60 } },
+    { id: 'bowl', name: 'Bowl Chair', base: { x: -300, z: 800 }, top: { x: -170, z: 210 } },
+  ];
+
+  // ---- dressing ----
+  forest(map, rand, { x0: -470, x1: -300, z0: 200, z1: 820, density: 0.0022, minGap: 11, types: ['fir', 'pine', 'birch'],
+    keepOut: (x, z) => Math.abs(x - (-300 + (z - 800) * 0.22)) < 26 });
+  forest(map, rand, { x0: -240, x1: -60, z0: 420, z1: 860, density: 0.0018, minGap: 12, types: ['pine', 'fir'] });
+  forest(map, rand, { x0: 200, x1: 480, z0: 340, z1: 880, density: 0.0024, minGap: 11, types: ['fir', 'pine'] });
+  forest(map, rand, { x0: -500, x1: 500, z0: 880, z1: 1010, density: 0.0012, minGap: 16, types: ['pine', 'birch'],
+    keepOut: (x, z) => Math.abs(x) < 120 });
+  // rocks along the spurs and under the cliff
+  for (let z = 120; z < 700; z += 22) {
+    for (const at of [-150, 160]) {
+      const jitter = (rand() - 0.5) * 30;
+      place(map, rand() < 0.5 ? 'rock' : 'boulder', at + jitter, z + rand() * 12, { s: 1 + rand() * 0.9, r: rand() * 3 });
+    }
+  }
+  for (let i = 0; i < 26; i++) place(map, 'rock', 60 + rand() * 260, 312 + rand() * 40, { s: 1.2 + rand() * 0.8, r: rand() * 3 });
+  for (let i = 0; i < 18; i++) place(map, 'boulder', -430 + rand() * 120, 260 + rand() * 480, { s: 1 + rand() * 0.8, r: rand() * 3 });
+
+  // the base area
+  place(map, 'hut', -60, 962, { r: 0.4, s: 1.4 });
+  place(map, 'hut', -96, 976, { r: 0.9 });
+  place(map, 'sign', 40, 918, { r: Math.PI });
+  place(map, 'sign', -290, 792, { r: Math.PI });
+  for (let i = 0; i < 10; i++) place(map, 'flag', -110 + i * 22, 940 + (i % 2) * 8);
+  for (let i = 0; i < 6; i++) place(map, 'lamp', -120 + i * 44, 968);
+  place(map, 'snowman', 6, 952); place(map, 'snowman', 13, 958, { s: 0.8 });
+  // markers at the top of each face so you can tell them apart from the summit
+  for (const [sx, sz] of [[-250, 120], [0, 110], [200, 120]]) { place(map, 'flag', sx, sz); place(map, 'flag', sx + 10, sz + 6); }
+
+  // You start at the summit, so the first thing you do is ride. The lift is waiting when you
+  // reach the bottom, which is a better introduction to it than starting in a queue.
+  map.start = { x: 20, z: 96, yaw: 0 };
+  finish(map, SPAN - 12, 40);
+  pruneSteepProps(map);
+  return map;
+}
+
+const maps = [alpineBowl(), firstTracks(), gladeRun(), ridgeLine(), cornice(), spineLine(), couloir()];
 for (const m of maps) {
   fs.writeFileSync(path.join(MAPS, `${m.id}.json`), JSON.stringify(serializeMap(m)));
   const s = mapStats(m);

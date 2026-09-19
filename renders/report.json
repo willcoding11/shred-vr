@@ -1,4 +1,438 @@
 {
+  "alpine-bowl": {
+    "name": "Alpine Bowl",
+    "difficulty": "black",
+    "description": "An open mountain. Four faces around one valley, a cirque, a gully, cliffs, a frozen tarn and a park, all draining to the village.",
+    "lengthM": 1017,
+    "widthM": 1017,
+    "verticalDropM": 188.46795654296875,
+    "avgGradeDeg": 10.49880977294588,
+    "steepPct": 29.480760477574314,
+    "flatPct": 1.0118693323062917,
+    "maxSlopeDeg": 80.19408123180403,
+    "slopeHistogram": [
+      2,
+      4,
+      8,
+      10,
+      15,
+      18,
+      14,
+      12,
+      8,
+      9
+    ],
+    "props": 1438,
+    "gates": 0,
+    "propCounts": {
+      "pine": 545,
+      "fir": 507,
+      "birch": 194,
+      "boulder": 64,
+      "rock": 49,
+      "sign": 10,
+      "flag": 50,
+      "hut": 6,
+      "lamp": 11,
+      "snowman": 2
+    },
+    "profile": [
+      {
+        "z": 0,
+        "y": 483,
+        "gradeDeg": 0
+      },
+      {
+        "z": 50,
+        "y": 476.8,
+        "gradeDeg": 32.1
+      },
+      {
+        "z": 100,
+        "y": 419.2,
+        "gradeDeg": 55.9
+      },
+      {
+        "z": 150,
+        "y": 362.1,
+        "gradeDeg": 35.7
+      },
+      {
+        "z": 200,
+        "y": 327.5,
+        "gradeDeg": 31.3
+      },
+      {
+        "z": 250,
+        "y": 301.2,
+        "gradeDeg": 22.4
+      },
+      {
+        "z": 300,
+        "y": 281.7,
+        "gradeDeg": 27.8
+      },
+      {
+        "z": 350,
+        "y": 254.8,
+        "gradeDeg": 29.3
+      },
+      {
+        "z": 400,
+        "y": 226.9,
+        "gradeDeg": 30.6
+      },
+      {
+        "z": 450,
+        "y": 197.5,
+        "gradeDeg": 42.3
+      },
+      {
+        "z": 500,
+        "y": 163,
+        "gradeDeg": 15.4
+      },
+      {
+        "z": 550,
+        "y": 155.4,
+        "gradeDeg": 6.5
+      },
+      {
+        "z": 600,
+        "y": 147.9,
+        "gradeDeg": 34.3
+      },
+      {
+        "z": 650,
+        "y": 100.4,
+        "gradeDeg": 40.9
+      },
+      {
+        "z": 700,
+        "y": 65.1,
+        "gradeDeg": 31
+      },
+      {
+        "z": 750,
+        "y": 36.7,
+        "gradeDeg": 24.8
+      },
+      {
+        "z": 800,
+        "y": 16.3,
+        "gradeDeg": 14
+      },
+      {
+        "z": 850,
+        "y": 6.5,
+        "gradeDeg": 6.4
+      },
+      {
+        "z": 900,
+        "y": 0.8,
+        "gradeDeg": 2.5
+      },
+      {
+        "z": 950,
+        "y": -2.4,
+        "gradeDeg": 10
+      },
+      {
+        "z": 1000,
+        "y": -13.6,
+        "gradeDeg": 11.5
+      }
+    ],
+    "start": {
+      "x": 232.2451191574027,
+      "z": 44.5979205375387,
+      "yaw": 0
+    },
+    "finish": {
+      "x": 0,
+      "z": 1008,
+      "w": 40
+    },
+    "png": "renders\\alpine-bowl.png"
+  },
+  "cornice": {
+    "name": "Cornice",
+    "difficulty": "black",
+    "description": "A long run-in to one very big jump, then a fast tail with two smaller hits.",
+    "lengthM": 878,
+    "widthM": 222,
+    "verticalDropM": 391.6874599456787,
+    "avgGradeDeg": 24.04228482536295,
+    "steepPct": 22.44914902449149,
+    "flatPct": 0.099626400996264,
+    "maxSlopeDeg": 72.84430212738982,
+    "slopeHistogram": [
+      0,
+      3,
+      6,
+      14,
+      21,
+      19,
+      15,
+      8,
+      13,
+      2
+    ],
+    "props": 160,
+    "gates": 0,
+    "propCounts": {
+      "pine": 62,
+      "fir": 48,
+      "flag": 22,
+      "sign": 4,
+      "fence": 18,
+      "lamp": 4,
+      "snowman": 2
+    },
+    "profile": [
+      {
+        "z": 0,
+        "y": 0.1,
+        "gradeDeg": 7.4
+      },
+      {
+        "z": 50,
+        "y": -8.2,
+        "gradeDeg": 21.1
+      },
+      {
+        "z": 100,
+        "y": -30.9,
+        "gradeDeg": 25.8
+      },
+      {
+        "z": 150,
+        "y": -57,
+        "gradeDeg": 26.3
+      },
+      {
+        "z": 200,
+        "y": -82.6,
+        "gradeDeg": 26.3
+      },
+      {
+        "z": 250,
+        "y": -103.2,
+        "gradeDeg": 13.5
+      },
+      {
+        "z": 300,
+        "y": -114.6,
+        "gradeDeg": 13.8
+      },
+      {
+        "z": 350,
+        "y": -134.3,
+        "gradeDeg": 34.8
+      },
+      {
+        "z": 400,
+        "y": -173.1,
+        "gradeDeg": 41
+      },
+      {
+        "z": 450,
+        "y": -216.5,
+        "gradeDeg": 41.1
+      },
+      {
+        "z": 500,
+        "y": -258.5,
+        "gradeDeg": 30.1
+      },
+      {
+        "z": 550,
+        "y": -283.1,
+        "gradeDeg": 20.2
+      },
+      {
+        "z": 600,
+        "y": -301.2,
+        "gradeDeg": 20.1
+      },
+      {
+        "z": 650,
+        "y": -320.2,
+        "gradeDeg": 23.6
+      },
+      {
+        "z": 700,
+        "y": -341.4,
+        "gradeDeg": 26.1
+      },
+      {
+        "z": 750,
+        "y": -364.9,
+        "gradeDeg": 19.3
+      },
+      {
+        "z": 800,
+        "y": -380.8,
+        "gradeDeg": 15.3
+      },
+      {
+        "z": 850,
+        "y": -392.4,
+        "gradeDeg": 6.3
+      }
+    ],
+    "start": {
+      "x": 0,
+      "z": 12,
+      "yaw": 0
+    },
+    "finish": {
+      "x": 0,
+      "z": 852,
+      "w": 60
+    },
+    "png": "renders\\cornice.png"
+  },
+  "couloir": {
+    "name": "Couloir",
+    "difficulty": "black",
+    "description": "A rock-walled chute that never opens up, with an ice band halfway and a sudden apron at the bottom.",
+    "lengthM": 898,
+    "widthM": 190,
+    "verticalDropM": 391.4466552734375,
+    "avgGradeDeg": 23.55284046593386,
+    "steepPct": 36.692629179331306,
+    "flatPct": 0.018996960486322188,
+    "maxSlopeDeg": 60.70315383649845,
+    "slopeHistogram": [
+      0,
+      6,
+      3,
+      4,
+      8,
+      15,
+      28,
+      16,
+      8,
+      13
+    ],
+    "props": 185,
+    "gates": 0,
+    "propCounts": {
+      "boulder": 22,
+      "rock": 29,
+      "pine": 32,
+      "fir": 34,
+      "flag": 46,
+      "sign": 4,
+      "fence": 12,
+      "lamp": 4,
+      "snowman": 2
+    },
+    "profile": [
+      {
+        "z": 0,
+        "y": 0.1,
+        "gradeDeg": 7.4
+      },
+      {
+        "z": 50,
+        "y": -8.9,
+        "gradeDeg": 22.1
+      },
+      {
+        "z": 100,
+        "y": -31.5,
+        "gradeDeg": 25.7
+      },
+      {
+        "z": 150,
+        "y": -57,
+        "gradeDeg": 25.9
+      },
+      {
+        "z": 200,
+        "y": -81.8,
+        "gradeDeg": 28.5
+      },
+      {
+        "z": 250,
+        "y": -107.5,
+        "gradeDeg": 26.6
+      },
+      {
+        "z": 300,
+        "y": -134.1,
+        "gradeDeg": 31.8
+      },
+      {
+        "z": 350,
+        "y": -165.9,
+        "gradeDeg": 31
+      },
+      {
+        "z": 400,
+        "y": -193.6,
+        "gradeDeg": 28.4
+      },
+      {
+        "z": 450,
+        "y": -220.9,
+        "gradeDeg": 27.5
+      },
+      {
+        "z": 500,
+        "y": -246.6,
+        "gradeDeg": 28.4
+      },
+      {
+        "z": 550,
+        "y": -274,
+        "gradeDeg": 26.2
+      },
+      {
+        "z": 600,
+        "y": -298.1,
+        "gradeDeg": 24.9
+      },
+      {
+        "z": 650,
+        "y": -321.5,
+        "gradeDeg": 25.1
+      },
+      {
+        "z": 700,
+        "y": -344,
+        "gradeDeg": 18.2
+      },
+      {
+        "z": 750,
+        "y": -359.1,
+        "gradeDeg": 15.5
+      },
+      {
+        "z": 800,
+        "y": -372.2,
+        "gradeDeg": 9.6
+      },
+      {
+        "z": 850,
+        "y": -380,
+        "gradeDeg": 5.5
+      }
+    ],
+    "start": {
+      "x": 0,
+      "z": 12,
+      "yaw": 0
+    },
+    "finish": {
+      "x": 0,
+      "z": 836,
+      "w": 78
+    },
+    "png": "renders\\couloir.png"
+  },
   "first-tracks": {
     "name": "First Tracks",
     "difficulty": "green",
@@ -22,13 +456,12 @@
       0,
       0
     ],
-    "props": 264,
-    "gates": 7,
+    "props": 257,
+    "gates": 0,
     "propCounts": {
       "pine": 113,
       "fir": 61,
       "birch": 22,
-      "gate": 7,
       "flag": 24,
       "lamp": 14,
       "sign": 2,
@@ -153,13 +586,12 @@
       1,
       0
     ],
-    "props": 376,
-    "gates": 7,
+    "props": 369,
+    "gates": 0,
     "propCounts": {
       "pine": 201,
       "fir": 104,
       "birch": 6,
-      "gate": 7,
       "flag": 27,
       "boulder": 1,
       "rock": 2,
@@ -306,8 +738,8 @@
       3,
       4
     ],
-    "props": 510,
-    "gates": 8,
+    "props": 502,
+    "gates": 0,
     "propCounts": {
       "fir": 227,
       "pine": 156,
@@ -316,7 +748,6 @@
       "flag": 37,
       "sign": 5,
       "boulder": 10,
-      "gate": 8,
       "fence": 18,
       "lamp": 4,
       "hut": 1,
@@ -440,5 +871,298 @@
       "w": 62
     },
     "png": "renders\\ridge-line.png"
+  },
+  "spine-line": {
+    "name": "Spine Line",
+    "difficulty": "black",
+    "description": "A knife-edge spine with both sides falling away, into a tight chute and a bowl.",
+    "lengthM": 938,
+    "widthM": 222,
+    "verticalDropM": 354.8857669830322,
+    "avgGradeDeg": 20.723787440132465,
+    "steepPct": 26.184926184926184,
+    "flatPct": 0.14763014763014762,
+    "maxSlopeDeg": 60.101142507445076,
+    "slopeHistogram": [
+      0,
+      5,
+      11,
+      9,
+      11,
+      19,
+      19,
+      9,
+      9,
+      8
+    ],
+    "props": 288,
+    "gates": 0,
+    "propCounts": {
+      "fir": 98,
+      "pine": 66,
+      "birch": 18,
+      "rock": 17,
+      "boulder": 32,
+      "flag": 30,
+      "sign": 3,
+      "fence": 18,
+      "lamp": 4,
+      "snowman": 2
+    },
+    "profile": [
+      {
+        "z": 0,
+        "y": 0.2,
+        "gradeDeg": 7.6
+      },
+      {
+        "z": 50,
+        "y": -8,
+        "gradeDeg": 19.6
+      },
+      {
+        "z": 100,
+        "y": -27.8,
+        "gradeDeg": 26.8
+      },
+      {
+        "z": 150,
+        "y": -54.6,
+        "gradeDeg": 23.8
+      },
+      {
+        "z": 200,
+        "y": -73.7,
+        "gradeDeg": 19.7
+      },
+      {
+        "z": 250,
+        "y": -93.9,
+        "gradeDeg": 25.1
+      },
+      {
+        "z": 300,
+        "y": -116.5,
+        "gradeDeg": 30
+      },
+      {
+        "z": 350,
+        "y": -142.7,
+        "gradeDeg": 23.8
+      },
+      {
+        "z": 400,
+        "y": -161.2,
+        "gradeDeg": 25
+      },
+      {
+        "z": 450,
+        "y": -186.4,
+        "gradeDeg": 30.1
+      },
+      {
+        "z": 500,
+        "y": -215.3,
+        "gradeDeg": 29.8
+      },
+      {
+        "z": 550,
+        "y": -242.8,
+        "gradeDeg": 26.8
+      },
+      {
+        "z": 600,
+        "y": -267.7,
+        "gradeDeg": 26.8
+      },
+      {
+        "z": 650,
+        "y": -292.8,
+        "gradeDeg": 21.6
+      },
+      {
+        "z": 700,
+        "y": -311.5,
+        "gradeDeg": 18.7
+      },
+      {
+        "z": 750,
+        "y": -328.2,
+        "gradeDeg": 16.7
+      },
+      {
+        "z": 800,
+        "y": -341.5,
+        "gradeDeg": 13.3
+      },
+      {
+        "z": 850,
+        "y": -353.1,
+        "gradeDeg": 12.3
+      },
+      {
+        "z": 900,
+        "y": -363.2,
+        "gradeDeg": 6.2
+      }
+    ],
+    "start": {
+      "x": 0,
+      "z": 12,
+      "yaw": 0
+    },
+    "finish": {
+      "x": 0,
+      "z": 904,
+      "w": 64
+    },
+    "png": "renders\\spine-line.png"
+  },
+  "test-bowl": {
+    "name": "Test Bowl",
+    "difficulty": "blue",
+    "description": "",
+    "lengthM": 1020,
+    "widthM": 1020,
+    "verticalDropM": 188.71746826171875,
+    "avgGradeDeg": 10.48216690286879,
+    "steepPct": 49.44290657439446,
+    "flatPct": 1.0830449826989619,
+    "maxSlopeDeg": 71.85729796373515,
+    "slopeHistogram": [
+      2,
+      4,
+      5,
+      6,
+      8,
+      12,
+      14,
+      13,
+      12,
+      25
+    ],
+    "props": 1944,
+    "gates": 0,
+    "propCounts": {
+      "pine": 1944
+    },
+    "profile": [
+      {
+        "z": 0,
+        "y": 467.5,
+        "gradeDeg": 41.6
+      },
+      {
+        "z": 50,
+        "y": 425,
+        "gradeDeg": 18.6
+      },
+      {
+        "z": 100,
+        "y": 382,
+        "gradeDeg": 44
+      },
+      {
+        "z": 150,
+        "y": 366.3,
+        "gradeDeg": 2.4
+      },
+      {
+        "z": 200,
+        "y": 343,
+        "gradeDeg": 56.6
+      },
+      {
+        "z": 250,
+        "y": 288.1,
+        "gradeDeg": 28.5
+      },
+      {
+        "z": 300,
+        "y": 265.4,
+        "gradeDeg": 25.5
+      },
+      {
+        "z": 350,
+        "y": 238.4,
+        "gradeDeg": 34.1
+      },
+      {
+        "z": 400,
+        "y": 200.8,
+        "gradeDeg": 37.2
+      },
+      {
+        "z": 450,
+        "y": 170.2,
+        "gradeDeg": -18
+      },
+      {
+        "z": 500,
+        "y": 179.4,
+        "gradeDeg": 25.1
+      },
+      {
+        "z": 550,
+        "y": 138.4,
+        "gradeDeg": 45.8
+      },
+      {
+        "z": 600,
+        "y": 100.5,
+        "gradeDeg": 26.8
+      },
+      {
+        "z": 650,
+        "y": 75.8,
+        "gradeDeg": 26.5
+      },
+      {
+        "z": 700,
+        "y": 50.4,
+        "gradeDeg": 28.1
+      },
+      {
+        "z": 750,
+        "y": 25.7,
+        "gradeDeg": 20.7
+      },
+      {
+        "z": 800,
+        "y": 9.7,
+        "gradeDeg": 9.9
+      },
+      {
+        "z": 850,
+        "y": 4,
+        "gradeDeg": 2.9
+      },
+      {
+        "z": 900,
+        "y": 1,
+        "gradeDeg": 1.3
+      },
+      {
+        "z": 950,
+        "y": -0.1,
+        "gradeDeg": 5.1
+      },
+      {
+        "z": 1000,
+        "y": -5.1,
+        "gradeDeg": 5.4
+      }
+    ],
+    "start": {
+      "x": 250.16803808484536,
+      "z": 22.819896126392337,
+      "yaw": 0
+    },
+    "finish": {
+      "x": 0,
+      "z": 1008,
+      "w": 40
+    },
+    "png": "renders\\test-bowl.png"
   }
 }

@@ -89,6 +89,21 @@ export function buildMountain(map, { relief = 1, rough = 1, seed = Math.random()
   const SPURS = [-1.2, -0.42, 0.40, 1.15];
   const twist = (d) => ((d - reach * 0.5) / (reach * 0.5)) * 0.20;
 
+  // Ways off the top. A rim that is a pure function of distance is a closed ring, and a closed ring
+  // means the first thing a New Map hands you is a hill you cannot ride off: measured on the
+  // generated mountain, every bearing crossed 55-63 degrees and the lift unloaded above it. At
+  // these bearings the rim opens into a rollover instead. The lift top is put on the middle one.
+  const RAMPS = [-0.78, 0.04, 0.60];
+  const rimGate = (th) => {
+    let open = 0;
+    for (const r of RAMPS) { const u = (th - r) / 0.14; open = Math.max(open, Math.exp(-u * u)); }
+    return 1 - open;
+  };
+  // One unambiguous high point, between two of the ramps, plus a ceiling so no corner of the map
+  // can out-climb it -- the far shoulders otherwise rise above the summit and turn it into a col.
+  const PEAK = { d: reach * 0.90, th: -0.37, h: reach * 0.075, rd: reach * 0.11, rth: 0.20 };
+  const CAP = elev(reach * 0.95) + reach * 0.13, CAPSOFT = reach * 0.04;
+
   for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
     const [wx, wz] = gridToWorld(map, x, z);
     const { d, th, behind } = polar(wx, wz);
@@ -101,15 +116,29 @@ export function buildMountain(map, { relief = 1, rough = 1, seed = Math.random()
       const k = a / (0.20 + 0.00016 * d);
       y += Math.exp(-k * k) * (reach * 0.016 + d * 0.030) * fade;
     }
-    y += smooth01((d - reach * 0.82) / (reach * 0.09)) * reach * 0.055;   // a rim you drop in over
+    // Relief that is not a function of (d, th), so one part of the hill is a different shape from
+    // another part at the same height. Deliberately anisotropic -- short wavelength across the
+    // hill, long down it -- so it makes ribs and hollows to ride between without steepening the
+    // fall line enough to reverse the drainage and pond it.
+    const rel = smooth01((d - reach * 0.16) / (reach * 0.17)) * (1 - smooth01((d - reach * 0.82) / (reach * 0.15)))
+              * (1 - 0.45 * smooth01((Math.abs(th) - 0.55) / 0.60));
+    if (rel > 0) {
+      y += fbm(wx * 0.0052 + seed * 3, wz * 0.0019 + seed, 2) * reach * 0.022 * rel;
+      y += fbm(wx * 0.0115 + seed, wz * 0.0042 + seed * 5, 2) * reach * 0.007 * rel;
+    }
+    const gate = rimGate(th);                                             // a rim you drop in over
+    y += smooth01((d - reach * 0.82) / (reach * 0.09)) * reach * (0.017 + 0.040 * gate);
     if (behind > 0) {
       const b = smooth01(behind / 130);
       y += (Math.pow(Math.abs(wx) / (spanX * 0.34), 2) * 10 - behind * 0.075) * b;
     }
     // Far shoulders, scaled to the map. Hard-coding 74 m of rise and a 180 m fade made them
     // tower over a small hill and vanish on a big one.
-    y += Math.pow(Math.max(0, Math.abs(wx) - spanX * 0.35) / (spanX * 0.21), 2) * reach * 0.085
+    y += Math.pow(Math.max(0, Math.abs(wx) - spanX * 0.40) / (spanX * 0.17), 2) * reach * 0.055
        * smooth01((wz - spanZ * 0.18) / (spanZ * 0.18));
+    const over = y - (CAP - CAPSOFT);
+    if (over > 0) y = CAP - CAPSOFT + CAPSOFT * (1 - Math.exp(-over / CAPSOFT));
+    { const u = (d - PEAK.d) / PEAK.rd, v = (th - PEAK.th) / PEAK.rth; y += Math.exp(-(u * u + v * v)) * PEAK.h; }
     if (rough > 0) {
       y += fbm(wx * 0.0045 + seed, wz * 0.0045 + seed * 2, 4) * 3.0 * rough;
       y += fbm(wx * 0.018 + seed, wz * 0.018, 3) * 1.0 * rough;
@@ -120,7 +149,7 @@ export function buildMountain(map, { relief = 1, rough = 1, seed = Math.random()
 
   map.freeride = true;
   // One lift, base to rim, a little off the middle of the hill so it is not over the best line.
-  const topD = reach * 0.88, topTh = 0.08;
+  const topD = reach * 0.86, topTh = RAMPS[1];
   map.lifts = [{
     id: 'summit', name: 'Summit Express',
     base: { x: BX + spanX * 0.05, z: BZ - 26 },

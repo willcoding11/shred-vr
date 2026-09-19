@@ -177,6 +177,12 @@ function smoothAll(map, passes = 1, mask = () => 1) {
   }
 }
 function place(map, t, x, z, extra = {}) {
+  // Off the map is not a place. On the open mountain everything is positioned by bearing and
+  // distance, and its valley axis leans 165 m east as it climbs, so a bearing that sits comfortably
+  // on the hill low down walks off the edge higher up: 48 props ended up standing in the void past
+  // x = 508, the furthest at x = 988.
+  const hx = ((map.size.w - 1) * map.spacing) / 2, zMax = (map.size.h - 1) * map.spacing;
+  if (!(x >= -hx && x <= hx && z >= 0 && z <= zMax)) return;
   map.props.push({ t, x: +x.toFixed(2), z: +z.toFixed(2), s: extra.s ?? 1, r: extra.r ?? 0 });
 }
 // A forest edge: trees at a jittered inset so it reads as a treeline, not a fence.
@@ -807,9 +813,14 @@ function alpineBowl() {
   const BX = 0, BZ = 905;                      // the village: everything on the map runs to here
 
   // ---- the long profile, as a function of distance FROM the village ----
+  // The apron used to be 3 degrees out to d = 60 and did not reach 22 until d = 150, and with the
+  // run-out behind the village on top of that, EVERY descent ended with the same 164-176 m of
+  // ground too flat to carry speed on -- measured from eight different drop-ins, all eight. The
+  // last twenty seconds of every run were identical and slow. A village apron only has to be flat
+  // enough to stand on at the lift queue, which is fifty metres, not two hundred.
   const grade = (d) => (
-    d < 60 ? 3                                  // the village apron
-      : d < 150 ? 3 + ((d - 60) / 90) * 19      // roll out of the base
+    d < 50 ? 6                                  // the village apron
+      : d < 130 ? 6 + ((d - 50) / 80) * 17      // roll out of the base
         : d < 330 ? 25                          // lower faces
           : d < 400 ? 11                        // the mid bench: the tarn and the warming hut
             : d < 620 ? 27                      // the steep middle
@@ -829,6 +840,36 @@ function alpineBowl() {
   // Four spurs by bearing, each twisting with height so the faces between them curve.
   const SPURS = [-1.24, -0.42, 0.40, 1.16];
   const twist = (d) => (d - 480) / 480 * 0.20;
+
+  // ---- where you can get OFF the top ----
+  // The rim below used to be a pure function of distance, which makes it a closed ring rather than
+  // a rim: measured every on-map bearing from d = 905 down to d = 760 and not one of seventeen got
+  // off the summit without crossing 55 degrees, minimum anywhere 55, worst 64. The Summit Express
+  // unloaded you onto 52 degree ground above it and the start gate sat on 47. Segmenting the
+  // CORNICE on top of that achieved nothing, because the wall underneath it was solid.
+  //
+  // So the rim's height is a function of bearing too. At these four bearings it opens into a
+  // rollover you ride off; between them it stays the corniced headwall you look over. The couloir
+  // cuts through at about -0.53 as a fifth, expert way down.
+  // 0.36 and not the 0.62 that would balance them, because the axis leans 165 m east by the time
+  // it reaches the rim and the on-map bearing range up there is only about -0.87 to +0.40: a ramp
+  // at 0.62 would have been a drop-in 165 m past the edge of the world.
+  const RAMPS = [-0.80, 0.06, 0.36];
+  const rimGate = (th) => {
+    let open = 0;
+    for (const r of RAMPS) { const u = (th - r) / 0.13; open = Math.max(open, Math.exp(-u * u)); }
+    return 1 - open;
+  };
+  // One unambiguous high point, on the shoulder between the centre and east drop-ins so it stands
+  // against the sky both from the village and from the lift. Without it the mountain had no top:
+  // its highest ground was the west edge of the MAP, 82 m above where the lift drops you.
+  // It sits on the west-centre spur, halfway between two drop-ins rather than on top of one, and
+  // at d = 880 rather than up on the plateau -- past about 900 on this bearing you are off the
+  // north edge of the map, so a "summit" any further out would have been half a hill in the void.
+  const PEAK = { d: 880, th: -0.37, h: 54, rd: 100, rth: 0.20 };
+  // and a ceiling for everything that is not the peak, so no map corner can out-climb it again.
+  // Fading the shoulders by z only ever moved that problem from one corner to the other.
+  const CAP = () => elev(928) + 92, CAPSOFT = 30;
   // The valley AXIS leans across the hill as it climbs, so the mountain is not a cone. Everything
   // downstream reads distance from this moving axis rather than from the village, which is what
   // makes the fall line curve: the point you are falling toward keeps sliding sideways as you
@@ -855,22 +896,55 @@ function alpineBowl() {
       const wgt = a / (0.20 + 0.00016 * d);
       y += Math.exp(-wgt * wgt) * (16 + d * 0.030) * fade;
     }
-    // The cirque: a real rim. 26 m over 110 m is 13 degrees, which is not a headwall, it is a
-    // ramp -- the top of the mountain was measurably its flattest part. This is a rim you drop in
-    // over, and it carries the summit above the shoulders instead of below them.
-    y += smooth01((d - 790) / 80) * 58;
-    y += smooth01((d - 870) / 60) * 46;
+    // Relief that is NOT a function of (d, th). Everything else on this mountain is authored in
+    // polar coordinates around the village, and it measured exactly as that sounds: 99.4% of the
+    // height was a 1-D function of distance from the base, the residual averaged 9.3 m on a 490 m
+    // mountain, and across the whole lower third -- the village approach, the most-ridden ground
+    // on the map -- nothing departed from a perfect cone by more than 2.4 m. Rings of features on
+    // a cone still ride like a cone.
+    //
+    // The noise is deliberately ANISOTROPIC: short wavelength across the hill, long wavelength
+    // down it. That is the difference between relief and damage. Ribs and hollows that run with
+    // the fall line give you spurs to ride between and lines to choose, while the gradient ALONG
+    // the fall line barely changes, so the drainage that took two rounds to get right survives.
+    // Isotropic noise at this amplitude would have been 26 degrees of local gradient against a
+    // 25 degree face, which reverses the flow and ponds it.
+    const rel = smooth01((d - 150) / 160) * (1 - smooth01((d - 800) / 140))
+              * (1 - 0.45 * smooth01((Math.abs(th) - 0.55) / 0.60));
+    if (rel > 0) {
+      y += fbm(wx * 0.0052 + 13.7, wz * 0.0019 + 5.1, 2) * 21 * rel;
+      y += fbm(wx * 0.0115 + 2.3, wz * 0.0042 + 9.8, 2) * 7 * rel;
+    }
+    // The cirque rim -- but gated by bearing (see RAMPS above). Full height between the ramps,
+    // where it is a headwall with a cornice on it; a third of that at a ramp, where the same
+    // 120 m carries about 12 degrees of extra grade and you simply ride off the top.
+    const gate = rimGate(th);
+    y += smooth01((d - 790) / 80) * (16 + 42 * gate);
+    y += smooth01((d - 870) / 60) * (12 + 34 * gate);
     // Behind the village the valley keeps running out, and its sides rise -- gently, and eased in
     // over 130 m. Switching this on with no blend put a 762 m wide, 88 degree wall straight across
     // the map at z = 906 and dropped the finish into a 315 m deep slot.
+    //
+    // The fall along it matters as much as the sides: 0.075 is 4.3 degrees, and at mu = 0.034
+    // that is inside the band where you are decelerating -- it was the second half of the dead
+    // flat that ended every single run. 0.16 is 9 degrees: still an obvious valley floor you can
+    // stand on, but one you arrive at the bottom of still moving.
     if (behind > 0) {
       const b = smooth01(behind / 130);
-      y += (Math.pow(Math.abs(wx) / 340, 2) * 10 - behind * 0.075) * b;
+      y += (Math.pow(Math.abs(wx) / 340, 2) * 10 - behind * 0.16) * b;
     }
-    // Far shoulders, so the map edge is a mountainside and not a wall. Faded out near the top,
-    // because up there they were rising ABOVE the summit and turning it into a col: the highest
-    // ground on the map was a corner at (508, 129), 93 m over the start gate.
-    y += Math.pow(Math.max(0, Math.abs(wx) - 355) / 210, 2) * 74 * smooth01((wz - 180) / 180);
+    // Far shoulders, so the map edge is a mountainside and not a wall. They used to start biting
+    // at |x| = 355 with a squared ramp to 74 m, which walled off 150 m of each side: the west
+    // flank measured 38-42 degrees for its entire length and only 288 m of the map's 1017 m width
+    // was under 15 degrees at the base. Pushed outward and cut to 48 m, they still close the view
+    // without eating a third of the rideable mountain.
+    y += Math.pow(Math.max(0, Math.abs(wx) - 400) / 170, 2) * 48 * smooth01((wz - 180) / 180);
+    // Roll everything off as it approaches the ceiling, so no corner of the map can out-climb the
+    // summit. Exponential rather than a clamp, because a clamp is a crease you can see.
+    const over = y - (CAP() - CAPSOFT);
+    if (over > 0) y = CAP() - CAPSOFT + CAPSOFT * (1 - Math.exp(-over / CAPSOFT));
+    // The peak is added AFTER the ceiling, because it is the thing the ceiling exists to protect.
+    { const u = (d - PEAK.d) / PEAK.rd, v = (th - PEAK.th) / PEAK.rth; y += Math.exp(-(u * u + v * v)) * PEAK.h; }
     return y;
   };
 
@@ -900,12 +974,24 @@ function alpineBowl() {
       if (d < 180 || d > 700) continue;
       const env = Math.min(1, (d - 180) / 90, (700 - d) / 110);
       const c = cx(wz);
+      // The hillside falls away east faster than a fixed 11 m wall can rise, so east of the trough
+      // the "wall" measured NEGATIVE -- between 0.2 and 14.9 m below the floor at z = 550 and
+      // z = 700 -- which makes it a one-walled ditch, not a halfpipe. The downhill wall carries the
+      // local cross-fall on top of its own height, so both sides stand up wherever it is cut.
+      const y0 = shape(c, wz);
       for (let x = 0; x < w; x++) {
         const [wx] = gridToWorld(map, x, z);
-        const u = (wx - c) / 13;
-        map.heights[z * w + x] -= Math.exp(-u * u) * 9 * env;
-        // transition walls that stand up, so there is something to hit rather than a dip to cross
-        map.heights[z * w + x] += Math.exp(-Math.pow((Math.abs(wx - c) - 17) / 8.5, 2)) * 11 * env;
+        const a = Math.abs(wx - c);
+        if (a > 42) continue;
+        // A halfpipe is a CROSS-SECTION, not a bump. Adding a fixed lump either side meant the
+        // downhill wall had to fight the hillside falling away beneath it: east of the trough the
+        // "wall" measured up to 14.9 m BELOW the floor, so it rode as a one-walled ditch. Making
+        // the lump taller by the local cross-fall fixed that and produced a 78 degree cliff
+        // instead. Blending toward a profile measured from the centreline gives both walls the
+        // same height above the same floor whatever the hill underneath is doing.
+        const prof = -9 * Math.exp(-Math.pow(a / 13, 2)) + 10 * Math.exp(-Math.pow((a - 17) / 10, 2));
+        const k = (1 - smooth01((a - 26) / 16)) * env;
+        map.heights[z * w + x] += ((y0 + prof) - map.heights[z * w + x]) * k;
       }
     }
   }
@@ -941,7 +1027,12 @@ function alpineBowl() {
       // 24 m headwall at 87 degrees, which is neither rideable nor anything a tarn looks like.
       // Spread over three radii it reads as the basin the water sat in.
       const k = 1 - smooth01((r - 0.85) / 2.0);
-      const target = shape(lx, lz) - 1.4;
+      // Tilted 2.6 degrees down-valley rather than level. A dead flat 116 m disc on a mountain
+      // where you need about 2 degrees just to overcome friction is somewhere you glide onto and
+      // stop, and the steepest-descent tracer simply circled on it forever. 2.6 degrees measured
+      // out at 2 once the blend and the noise had their say, which is break-even and no use; at
+      // 4.5 it still reads as the flat pan of a lake beside a 27 degree face, and you cross it.
+      const target = shape(lx, lz) - 1.4 - (wz - lz) * deg(4.5);
       map.heights[z * w + x] += (target - map.heights[z * w + x]) * k;
     }
     map.tarn = { x: lx, z: lz };
@@ -987,7 +1078,11 @@ function alpineBowl() {
       const [wx, wz] = gridToWorld(map, x, z);
       const { d, th } = polar(wx, wz);
       if (d < 790 || d > 900) continue;
-      const seg = Math.sin(th * 4.6 + 0.7);                 // gaps where it dips below zero
+      // Broken into segments by its own sine AND held off the drop-in ramps. Gapping it on its
+      // own phase was never enough: the phase happened to be near its peak at the centre ramp, so
+      // the cornice quietly rebuilt the headwall the rim had just opened, and the Summit Express
+      // still unloaded you above 55 degrees of it.
+      const seg = Math.sin(th * 4.6 + 0.7) * rimGate(th);
       if (seg < 0.08) continue;
       const lip = 852 + fbm(th * 4.2 + 2.2, 3.3, 3) * 14;
       const amt = Math.min(1, (seg - 0.08) / 0.5) * (5.5 + fbm(th * 2.7, 1.1, 2) * 3.5);
@@ -999,14 +1094,21 @@ function alpineBowl() {
     for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
       const [wx, wz] = gridToWorld(map, x, z);
       const { d, th } = polar(wx, wz);
-      const u = (d - 790) / 90, v = (th + 0.86) / 0.26;
+      // Moved west from -0.86 and narrowed: it used to sit squarely on what is now the west
+      // drop-in ramp, and a 34 m knoll in a ramp is not a knoll, it is the headwall again.
+      const u = (d - 790) / 90, v = (th + 1.05) / 0.20;
       map.heights[z * w + x] += Math.exp(-(u * u + v * v)) * 34;
     }
     // An upper bowl scooped into the east face, with a rim on its downhill side you drop over.
     for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
       const [wx, wz] = gridToWorld(map, x, z);
       const { d, th } = polar(wx, wz);
-      const u = (d - 760) / 95, v = (th - 0.56) / 0.30;
+      // Pulled in from 0.56. The valley axis leans 165 m east by the top, so a bearing that is
+      // comfortably on the map low down walks off the edge higher up: at 0.56 the bowl's centre
+      // was at x = 562 and only 41% of it was on the map at all, along with all eight of its
+      // flags. At 0.30 the whole feature is on the hill, and it is 240 m from the lift instead
+      // of 420, which gives the Summit Express something to aim at.
+      const u = (d - 760) / 95, v = (th - 0.30) / 0.30;
       const g = Math.exp(-(u * u + v * v));
       map.heights[z * w + x] -= g * 15;
     }
@@ -1046,6 +1148,9 @@ function alpineBowl() {
     const env = Math.min(1, (d - 170) / 60, (520 - d) / 70);
     const { th: rth } = polar(wx, wz);
     const phase = (d - 170) + Math.sin(rth * 2.7) * 74 + Math.sin(rth * 5.1 + 1.3) * 26;
+    // Left running across the cat track on purpose. Clearing a corridor through them measured
+    // worse, not better: the rollers are what break a traverse line up, and with the corridor
+    // planed smooth four of eight descents stopped descending and followed the bench instead.
     map.heights[z * w + x] += (Math.sin(phase / 52 * Math.PI * 2) * 0.5 + 0.5) * 1.25 * env;
   }
 
@@ -1058,22 +1163,61 @@ function alpineBowl() {
       if (th < -1.35 || th > 1.30) continue;
       const line = 430 - th * 42;
       const off = Math.abs(d - line);
-      if (off > 16) continue;
-      const k = 1 - smooth01((off - 7) / 9);
-      const target = shape(...atPolar(line, th)) + 0.5;
-      // CUT ONLY, never fill. Flattening both sides of a bench across a 30 degree slope raises
-      // its downhill half by up to 8 m, and that lip is a dam: it turned the cat track into a
-      // moat running right round the mountain that every fall line drained into and stopped.
-      // A cut-only bench is a shelf, which is what a cat track is anyway.
+      if (off > 12) continue;
+      // Tapered at BOTH ENDS of its bearing range as well as across its width. Stopping the cut
+      // dead at th = -1.35 left the bench's west end as a 6.2 m hole in the hillside at (-400, 798).
+      const ends = smooth01((th + 1.35) / 0.24) * (1 - smooth01((th - 1.06) / 0.24));
+      const k = (1 - smooth01((off - 5) / 7)) * ends;
+      // ANCHORED AT ITS OWN DOWNHILL LIP. Three rounds of this have now shown the same thing from
+      // three directions: a bench whose floor sits below the natural ground at its downhill edge is
+      // a dam, and it does not matter how it got there. Filling the outside built an 8 m lip that
+      // ringed the mountain and every fall line drained into. Cutting to a smoothed survey line
+      // cut 40 m into the middle of the hill behind a 58 m, 81 degree bank. Bounding that cut to
+      // 7 m left a 7 m trench that three of eight descents settled into and followed for three
+      // kilometres. Tied to the lip it cannot be any of them: the surface meets the hillside
+      // exactly where the bench ends, so there is never a step up to leave it by, and the 4 degrees
+      // of outslope across the whole width means it is never level either. What is left above the
+      // track is a cut bank you drop in off, which is what a cat track looks like anyway.
+      const dLo = line - 12;
+      const target = shape(...atPolar(dLo, th)) + Math.max(0, d - dLo) * deg(6);
       if (map.heights[z * w + x] > target) map.heights[z * w + x] += (target - map.heights[z * w + x]) * k;
     }
   }
 
-  smoothAll(map, 1, (x, z) => { const { d } = polar(x, z); return d < 170 ? 1 : 0; });   // village apron
+  // 8. PLACES THAT ARE NOT ON THE POLAR GRID.
+  //    Everything above this point is authored in (d, th) around the village, which is exactly why
+  //    it all came out as rings and radii, and why 59% of the hill measured more than 150 m from
+  //    anything worth riding to. The voids were not scattered: they were the entire lower-outer
+  //    ring (z 700-1000, |x| 250-500, which is where you spend the last third of every descent)
+  //    and the upper-centre band. These sit at the measured centres of the biggest empty blocks,
+  //    and they are shapes you ride rather than scenery you pass.
+  const bump = (cx2, cz2, rx, rz, amt) => {
+    for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {
+      const [wx, wz] = gridToWorld(map, x, z);
+      const u = (wx - cx2) / rx, v = (wz - cz2) / rz, r2 = u * u + v * v;
+      if (r2 > 6) continue;
+      map.heights[z * w + x] += Math.exp(-r2) * amt;
+    }
+  };
+  bump(-306, 818, 64, 50, 12);                       // THE KNOB: a treed rise on the lower west
+  bump(332, 776, 27, 80, 15);                        // THE RIB, lower east, and the hollow beside
+  bump(292, 778, 19, 80, -5.5);                      //   it, which together make a wall to carve
+  bump(150, 302, 74, 15, 5.5);                       // THE WIND LIP: a lip across the upper face
+  bump(150, 326, 66, 26, -2.2);                      //   with its landing cut in below
+  bump(-404, 706, 52, 60, 9);                        // two more rises to break up the outer ring
+  bump(408, 694, 50, 58, 8);
+  // A shelf for the mid-mountain huts, cut not filled, so it cannot dam the face above it.
+  applyBrush(map, { tool: 'smooth', x: 306, z: 340, radius: 46, strength: 1, dt: 1.0, falloff: 0.5 });
+
+  smoothAll(map, 1, (x, z) => { const { d } = polar(x, z); return d < 110 ? 1 : 0; });   // village apron, and only the apron
 
   // ---------------- lifts ----------------
+  // Both tops land on a drop-in ramp, and both now unload within sight of what they are named
+  // for. The West Bowl Chair used to stop at d = 660, which is 40 m from the BOTTOM of the
+  // couloir -- you could not ride the couloir from the only lift on that side of the mountain
+  // without hiking 176 vertical metres first.
   const [t1x, t1z] = atPolar(888, 0.06);
-  const [t2x, t2z] = atPolar(660, -0.62);
+  const [t2x, t2z] = atPolar(858, -0.80);
   map.lifts = [
     { id: 'summit', name: 'Summit Express', base: { x: 46, z: BZ - 26 }, top: { x: t1x, z: t1z } },
     { id: 'west', name: 'West Bowl Chair', base: { x: -96, z: BZ - 34 }, top: { x: t2x, z: t2z } },
@@ -1117,6 +1261,29 @@ function alpineBowl() {
     place(map, 'boulder', rx2, rz2, { s: 1.1 + rand() * 0.8, r: rand() * 3 });
   }
 
+  // dressing for the places placed by coordinate above
+  forest(map, rand, { x0: -372, x1: -240, z0: 772, z1: 866, density: 0.013, minGap: 9, types: ['fir', 'fir', 'pine'],
+    keepOut: (x, z) => keep(x, z) || Math.hypot((x + 306) / 66, (z - 818) / 52) > 1 });
+  for (let i = 0; i < 9; i++) place(map, rand() < 0.5 ? 'rock' : 'boulder', -306 + (rand() - 0.5) * 120, 818 + (rand() - 0.5) * 96, { s: 1 + rand() * 0.8, r: rand() * 3 });
+  for (let i = 0; i < 16; i++) place(map, rand() < 0.35 ? 'rock' : 'boulder', 332 + (rand() - 0.5) * 46, 776 + (rand() - 0.5) * 150, { s: 1.2 + rand() * 1.0, r: rand() * 3 });
+  for (let i = 0; i < 14; i++) place(map, rand() < 0.5 ? 'rock' : 'boulder', 150 + (rand() - 0.5) * 170, 338 + rand() * 46, { s: 1.1 + rand() * 0.9, r: rand() * 3 });
+  { place(map, 'sign', 150, 292, { r: Math.PI }); place(map, 'flag', 108, 298); place(map, 'flag', 192, 298); }
+  // a hamlet on the east shoulder: the upper-centre band had nothing in it at all
+  { place(map, 'hut', 306, 340, { r: -0.4, s: 1.3 }); place(map, 'hut', 336, 356, { r: 0.6, s: 1.0 });
+    place(map, 'lamp', 318, 330); place(map, 'lamp', 292, 352); place(map, 'sign', 282, 326, { r: Math.PI });
+    for (let i = 0; i < 6; i++) place(map, 'flag', 268 + i * 16, 366 + (i % 2) * 6); }
+  for (const [fx, fz, fr] of [[-404, 706, 56], [408, 694, 54]]) {
+    forest(map, rand, { x0: fx - fr, x1: fx + fr, z0: fz - fr, z1: fz + fr, density: 0.010, minGap: 10, types: ['fir', 'pine'],
+      keepOut: (x, z) => keep(x, z) || Math.hypot(x - fx, z - fz) > fr });
+    for (let i = 0; i < 7; i++) place(map, rand() < 0.5 ? 'rock' : 'boulder', fx + (rand() - 0.5) * 110, fz + (rand() - 0.5) * 110, { s: 1 + rand() * 0.9, r: rand() * 3 });
+  }
+  // and the outer ring low down, where the last third of every descent happens
+  for (const [fx, fz] of [[-348, 892], [352, 884], [-256, 952], [268, 946]]) {
+    forest(map, rand, { x0: fx - 58, x1: fx + 58, z0: fz - 44, z1: fz + 44, density: 0.009, minGap: 10, types: ['fir', 'pine', 'birch'],
+      keepOut: (x, z) => keep(x, z) || Math.hypot((x - fx) / 58, (z - fz) / 44) > 1 });
+    for (let i = 0; i < 5; i++) place(map, rand() < 0.5 ? 'rock' : 'boulder', fx + (rand() - 0.5) * 100, fz + (rand() - 0.5) * 78, { s: 1 + rand() * 0.8, r: rand() * 3 });
+  }
+
   // the village, and the places people would actually put things
   place(map, 'hut', -46, BZ + 26, { r: 0.35, s: 1.6 });
   place(map, 'hut', -84, BZ + 44, { r: 0.9, s: 1.2 });
@@ -1138,8 +1305,8 @@ function alpineBowl() {
     const [rx2, rz2] = atPolar(d, th);
     place(map, 'boulder', rx2, rz2, { s: 1.4 + rand() * 1.0, r: rand() * 3 });
   }
-  { const [kx, kz] = atPolar(800, -0.86); place(map, 'sign', kx, kz, { r: Math.PI }); place(map, 'flag', kx + 10, kz + 6); }
-  { const [bx2, bz2] = atPolar(742, 0.56); for (let i = 0; i < 8; i++) { const t = i / 8 * Math.PI * 2; place(map, 'flag', bx2 + Math.cos(t) * 52, bz2 + Math.sin(t) * 40); } }
+  { const [kx, kz] = atPolar(800, -1.05); place(map, 'sign', kx, kz, { r: Math.PI }); place(map, 'flag', kx + 10, kz + 6); }
+  { const [bx2, bz2] = atPolar(742, 0.30); for (let i = 0; i < 8; i++) { const t = i / 8 * Math.PI * 2; place(map, 'flag', bx2 + Math.cos(t) * 52, bz2 + Math.sin(t) * 40); } }
   // an upper treeline, so the top is not bare to the rim
   forest(map, rand, { x0: -420, x1: 420, z0: 140, z1: 330, density: 0.0011, minGap: 16, types: ['fir', 'fir', 'pine'],
     keepOut: (x, z) => { const { d } = polar(x, z); return d > 830 || keep(x, z); } });
@@ -1152,9 +1319,14 @@ function alpineBowl() {
   // fences marking the tarn, so nobody rides into it wondering what it was
   { const a = map.tarn; for (let i = 0; i < 10; i++) { const t = (i / 10) * Math.PI * 2; place(map, 'flag', a.x + Math.cos(t) * 62, a.z + Math.sin(t) * 44); } }
 
+  // The ways off the top, in world coordinates, so the harness can verify each one is rideable
+  // and the signs below stand where they actually are.
+  map.dropIns = RAMPS.map((th) => { const [x, z] = atPolar(872, th); return { x: +x.toFixed(1), z: +z.toFixed(1) }; });
+  for (const p of map.dropIns) { place(map, 'sign', p.x, p.z, { r: Math.PI }); place(map, 'flag', p.x + 11, p.z + 7); place(map, 'flag', p.x - 11, p.z + 7); }
+
   map.start = { x: t1x + 14, z: t1z + 26, yaw: 0 };
   finish(map, (h - 4) * sp, 40);
-  pruneSteepProps(map, 40);
+  pruneSteepProps(map, 34);
   return map;
 }
 

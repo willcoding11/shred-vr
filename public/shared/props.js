@@ -199,9 +199,12 @@ export function propVariants(quality = 'fast') {
     birch: mk(3, (i) => mergeGeometries(realBirch({ height: 6.2 + i * 0.85, rand: rnd(57 + i * 433) }))),
   } : { pine: mk(1, () => pine()), fir: mk(1, () => fir()), birch: mk(1, () => birch()) };
   for (const [t, list] of Object.entries(hand)) {
-    if (!list.length || !vcache[t]) continue;
+    // No `&& vcache[t]` here. The procedural cache only ever holds the three tree types, so that
+    // guard silently dropped every modelled RAIL: geoKey saw no variants, returned the bare type,
+    // and all three rails rendered as the first one. The variant picker appeared to do nothing.
+    if (!list.length) continue;
     for (const g of list) g.computeBoundingSphere();
-    vcache[t] = list;                   // a modelled tree replaces every procedural variant of it
+    vcache[t] = list;                   // a modelled prop replaces every procedural variant of it
   }
   return vcache;
 }

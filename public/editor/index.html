@@ -132,7 +132,7 @@
     <section id="secFeature" class="hidden">
       <h3>Orientation</h3>
       <label class="check"><input id="featDownhill" type="checkbox" checked /> Face downhill</label>
-      <label>Turn <input id="featYaw" type="range" min="-3.142" max="3.142" step="0.02" /><output></output></label>
+      <div class="turnrow"><span>Turn</span><b id="featYawOut">0&deg;</b><span class="keys">&larr; &rarr;</span></div>
       <div id="featVariantRow" class="hidden">
         <div class="rowlabel">Rail</div>
         <div class="varrow">
@@ -141,7 +141,7 @@
           <button class="railvar" data-v="2">3 &middot; long</button>
         </div>
       </div>
-      <p class="note">Turn is added on top of the fall line. Untick to aim it yourself.</p>
+      <p class="note">Arrow keys turn it, Shift for bigger steps. The turn is added on top of the fall line &mdash; untick to aim it yourself. With something selected, the arrows turn that instead.</p>
     </section>
     <section id="secBerm" class="hidden">
       <h3>Berm</h3>

@@ -187,3 +187,9 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 .varrow button:hover { background: rgba(255,255,255,0.09); }
 .varrow button.active { background: rgba(56,189,248,0.18); color: #bae6fd; border-color: rgba(56,189,248,0.45); }
 .rowlabel { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.55; margin-top: 6px; }
+
+
+/* the turn readout, which the arrow keys drive */
+.turnrow { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; font-size: 13px; }
+.turnrow b { font-variant-numeric: tabular-nums; min-width: 52px; color: #e2e8f0; }
+.turnrow .keys { margin-left: auto; font-size: 12px; opacity: 0.55; letter-spacing: 0.12em; }

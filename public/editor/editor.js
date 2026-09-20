@@ -556,7 +556,30 @@ $('propRandomRot').addEventListener('change', (e) => { state.prop.randomRot = e.
 bindRange('scatterDensity', state.prop, 'density', { fmt: (v) => Math.round(v * 100) + '%' });
 bindRange('scatterGap', state.prop, 'gap', { fmt: (v) => v + ' m' });
 // orientation for rails and kickers
-bindRange('featYaw', state.feature, 'yaw', { fmt: (v) => Math.round((v * 180) / Math.PI) + '\u00b0', after: () => updateCursor(lastHit) });
+function showFeatureYaw() {
+  const d = Math.round((state.feature.yaw * 180) / Math.PI);
+  $('featYawOut').textContent = (d > 0 ? '+' : '') + d + '\u00b0';
+}
+// Turning a thing is a nudge-and-look job, so it is on the arrow keys rather than a slider you
+// have to find, aim at and drag while the thing you are aiming is off-screen behind the panel.
+function turnFeature(delta) {
+  state.feature.yaw = ((state.feature.yaw + delta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  showFeatureYaw();
+  updateCursor(lastHit);
+}
+// With something selected the same keys turn THAT, which is what you reach for after placing one
+// slightly wrong.
+function turnSelected(delta) {
+  const p = state.map?.props[state.selected];
+  if (!p) return false;
+  const before = snapshotProps();
+  p.r = +(((p.r || 0) + delta) % (Math.PI * 2)).toFixed(3);
+  view.props.sync(); view.terrain?.setRails(); fillSelected();
+  pushUndo({ type: 'props', before, after: snapshotProps() });
+  markDirty({ props: true });
+  return true;
+}
+showFeatureYaw();
 $('featDownhill').addEventListener('change', (e) => { state.feature.downhill = e.target.checked; updateCursor(lastHit); });
 $$('.railvar').forEach((b) => b.addEventListener('click', () => {
   state.feature.variant = Number(b.dataset.v);
@@ -782,6 +805,12 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '[' || e.key === ']') { const el = $('brushRadius'); el.value = Math.max(2, Math.min(80, Number(el.value) + (e.key === ']' ? 2 : -2))); el.dispatchEvent(new Event('input')); return; }
   if (e.key === 'Escape') { state.selected = -1; view.showSelection(null); fillSelected(); return; }
   if (e.key === 'Home') { view.frameAll(); return; }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    const step = (e.shiftKey ? Math.PI / 12 : Math.PI / 36) * (e.key === 'ArrowRight' ? 1 : -1);
+    if (!turnSelected(step)) turnFeature(step);
+    e.preventDefault();
+    return;
+  }
   for (const [name, t] of Object.entries(TOOLS)) if (e.key.toUpperCase() === t.key) { setTool(name); return; }
 });
 

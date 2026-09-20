@@ -1,6 +1,22 @@
 // Procedural sound: wind, edge carve / skid noise and a few one-shots. No assets needed.
+// Everything about the rail grind, in one place and changeable while it plays. Grinding is the
+// one sound here with no real-world reference in the project -- it has to be dialled in by ear --
+// so it is exposed rather than buried in the graph.
+export const RAIL_DEFAULTS = {
+  hissFreq: 3200,   // the base over the metal
+  hissQ: 5.0,
+  hissGain: 0.20,
+  ringFreq: 760,    // the bar itself ringing
+  ringQ: 9.0,
+  ringGain: 0.13,
+  lfoRate: 7.5,     // a rail is never perfectly smooth under you
+  lfoDepth: 90,
+  speedRef: 9,      // how fast you have to be going for the full sound
+  clackFreq: 210,   // the knock as the board finds the steel, and again as it leaves
+};
+
 export class GameAudio {
-  constructor() { this.ctx = null; this.enabled = true; this.volume = 0.8; }
+  constructor() { this.ctx = null; this.enabled = true; this.volume = 0.8; this.rail = { ...RAIL_DEFAULTS }; }
   ensure() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -19,11 +35,13 @@ export class GameAudio {
     // swallows; steel is a narrow, ringing scrape with a hard edge to it. Two tight bandpasses --
     // one for the hiss of the base over metal, one for the ring in the bar itself -- plus a
     // slow detuned wobble on the ring, because a rail is never perfectly smooth under you.
-    this.railHiss = mk('bandpass', 3200, 5.0);
-    this.railRing = mk('bandpass', 760, 9.0);
-    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 7.5;
-    const lfoGain = ctx.createGain(); lfoGain.gain.value = 90;
+    const R = this.rail;
+    this.railHiss = mk('bandpass', R.hissFreq, R.hissQ);
+    this.railRing = mk('bandpass', R.ringFreq, R.ringQ);
+    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = R.lfoRate;
+    const lfoGain = ctx.createGain(); lfoGain.gain.value = R.lfoDepth;
     lfo.connect(lfoGain); lfoGain.connect(this.railRing.f.frequency); lfo.start();
+    this.railLfo = lfo; this.railLfoGain = lfoGain;
   }
   update(dt, { speed = 0, carving = 0, skidding = 0, grounded = true, tuck = 0, onRail = 0 } = {}) {
     if (!this.ctx || !this.enabled) return;
@@ -37,11 +55,19 @@ export class GameAudio {
     this.rumble.g.gain.setTargetAtTime(grounded ? Math.min(1, speed / 20) * 0.35 : 0, t, tc);
     // On a rail the snow sounds have to get out of the way, or you hear both at once and it
     // reads as neither.
-    const on = grounded ? onRail : 0;
-    const sp = Math.min(1, speed / 9);
-    this.railHiss.g.gain.setTargetAtTime(on * sp * 0.20, t, 0.03);
-    this.railHiss.f.frequency.setTargetAtTime(2400 + speed * 90, t, 0.05);
-    this.railRing.g.gain.setTargetAtTime(on * sp * 0.13, t, 0.03);
+    const R = this.rail;
+    const on = Math.max(grounded ? onRail : 0, this.railPreview ? 1 : 0);
+    const sp = this.railPreview ? 1 : Math.min(1, speed / Math.max(0.5, R.speedRef));
+    this.railHiss.g.gain.setTargetAtTime(on * sp * R.hissGain, t, 0.03);
+    this.railHiss.f.frequency.setTargetAtTime(R.hissFreq * 0.75 + speed * 90, t, 0.05);
+    this.railHiss.f.Q.setTargetAtTime(R.hissQ, t, 0.05);
+    this.railRing.g.gain.setTargetAtTime(on * sp * R.ringGain, t, 0.03);
+    this.railRing.f.frequency.setTargetAtTime(R.ringFreq, t, 0.05);
+    this.railRing.f.Q.setTargetAtTime(R.ringQ, t, 0.05);
+    if (this.railLfo) {
+      this.railLfo.frequency.setTargetAtTime(R.lfoRate, t, 0.05);
+      this.railLfoGain.gain.setTargetAtTime(R.lfoDepth, t, 0.05);
+    }
     if (on > 0.5) {
       this.carve.g.gain.setTargetAtTime(0, t, 0.03);
       this.skid.g.gain.setTargetAtTime(0, t, 0.03);
@@ -49,8 +75,12 @@ export class GameAudio {
   }
 
   // The clack as the board finds the steel, and again as it leaves.
-  railOn() { this.tone(210, 0.05, 'square', 0.10); this.burst(2600, 0.07, 0.10); }
+  railOn() { this.tone(this.rail.clackFreq, 0.05, 'square', 0.10); this.burst(2600, 0.07, 0.10); }
   railOff() { this.burst(1800, 0.05, 0.07); }
+
+  // Hold the grind on at full strength so it can be dialled in standing still.
+  previewRail(on) { this.ensure(); this.railPreview = !!on; if (on) this.railOn(); else this.railOff(); }
+  setRail(patch) { Object.assign(this.rail, patch); }
   tone(freq, dur = 0.12, type = 'sine', gain = 0.25, when = 0) {
     if (!this.ctx || !this.enabled) return;
     const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain();

@@ -15,6 +15,24 @@
 <body>
 <canvas id="c"></canvas>
 
+<!-- Sound mixer. The grind is the one sound in here with no real-world reference to check it
+     against, so it gets dialled in by ear, live, while it plays. -->
+<section id="mixer" hidden>
+  <header>
+    <h2>Grind sound</h2>
+    <button id="mixClose" class="btn ghost" type="button">Close</button>
+  </header>
+  <p class="note">It plays while this is open so you can hear each change. Nothing here is saved to
+  the map &mdash; when it sounds right, hit Copy and send me the numbers.</p>
+  <label class="play"><input id="mixPlay" type="checkbox" checked /> Playing</label>
+  <div class="mixgrid" id="mixGrid"></div>
+  <div class="mixbtns">
+    <button id="mixReset" class="btn ghost" type="button">Reset</button>
+    <button id="mixCopy" class="btn" type="button">Copy settings</button>
+  </div>
+  <pre id="mixOut"></pre>
+</section>
+
 <header class="topbar">
   <div class="brand"><span class="logo"></span>Shred VR</div>
   <span id="fps" class="pill fps" hidden>— fps</span>
@@ -86,6 +104,7 @@
       <label>Turn vignette <input id="setVignette" type="range" min="0" max="1" step="0.05" /><output></output></label>
       <label>Terrain relief <input id="setRelief" type="range" min="0" max="2" step="0.1" /><output></output></label>
       <label>Shadows <select id="setShadows"><option value="on">On</option><option value="off">Off</option></select></label>
+      <label>Grind sound <button id="btnMixer" class="btn ghost" type="button">Open the mixer</button></label>
       <label>Draw distance <select id="setDetail">
         <option value="1">Normal</option>
         <option value="1.6">Far — experimental</option>

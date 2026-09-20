@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../node_modules/three/build/three.module.js';
 import { deserializeMap, heightAt, normalAt, slopeDegAt, PROP_TYPES, bounds } from '../public/shared/mapformat.js';
-import { buildColliders, buildRails, railHeightAt, radiusAt, clears } from '../public/shared/collide.js';
+import { buildColliders, buildRails, railHeightAt, railLift, radiusAt, clears } from '../public/shared/collide.js';
 import { setRailSizes } from '../public/shared/collide.js';
 // The modelled props, if they have been measured. Without this the sim rides the placeholder rail
 // while the game rides the model, and the two disagree in silence.
@@ -34,7 +34,16 @@ const railList = buildRails(map);
 const onRail = (x, z) => railList.length && railHeightAt(railList, x, z) > heightAt(map, x, z);
 const terrain = {
   heightAt: (x, z) => { const g = heightAt(map, x, z); const r = railHeightAt(railList, x, z); return r > g ? r : g; },
-  normalAt: (x, z, o) => { if (onRail(x, z)) { if (o) { o[0] = 0; o[1] = 1; o[2] = 0; return o; } return [0, 1, 0]; } return normalAt(map, x, z, o); },
+  normalAt: (x, z, o) => {
+    const n = normalAt(map, x, z, o);
+    if (!railList.length) return n;
+    const k = railLift(railList, x, z, heightAt(map, x, z));      // blended, as in the game
+    if (k <= 0) return n;
+    const nx = n[0] * (1 - k), ny = n[1] * (1 - k) + k, nz = n[2] * (1 - k);
+    const l = Math.hypot(nx, ny, nz) || 1;
+    n[0] = nx / l; n[1] = ny / l; n[2] = nz / l;
+    return n;
+  },
   slopeAt: (x, z) => (onRail(x, z) ? 0 : slopeDegAt(map, x, z)),
 };
 const hardProps = buildColliders(map, { hardOnly: true, pad: 0.28 });

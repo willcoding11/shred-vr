@@ -1,7 +1,7 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
 import { gridToWorld, slopeDegAt, heightAt, normalAt, PROP_TYPES } from './mapformat.js';
-import { buildRails, railHeightAt } from './collide.js';
+import { buildRails, railHeightAt, railLift } from './collide.js';
 import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
@@ -22,10 +22,14 @@ export function makeSnowTexture(size = 512) {
     // Amplitude 7 on a base of 240 is 3% in sRGB, and after linearisation and ACES it lands at
     // about 1.5% on screen -- which is to say it was not there. Corduroy is a strong, obvious
     // thing to look at on a groomed piste.
-    const stripe = Math.sin((y / size) * Math.PI * 2 * 60) * 24;  // ~13 cm grooves on an 8 m tile
+    // The grooves run DOWN the hill, not across it. The texture's v axis is world z, which on
+    // these maps is the fall line, so putting the stripes on x makes them lines of constant x --
+    // running downslope, the way a groomer actually drives and the way a rider reads the pitch
+    // in front of them. Across the hill they told you where you were, not where you were going.
+    const stripe = Math.sin((x / size) * Math.PI * 2 * 60) * 24;  // ~13 cm grooves on an 8 m tile
     // and a coarser band across them, because one frequency at one angle reads as machined cloth
-    const coarse = Math.sin((y / size) * Math.PI * 2 * 7 + Math.sin((x / size) * 6.0) * 0.8) * 9;
-    const drift = Math.sin((x / size) * Math.PI * 2 * 3 + (y / size) * 5.1) * 6;
+    const coarse = Math.sin((x / size) * Math.PI * 2 * 7 + Math.sin((y / size) * 6.0) * 0.8) * 9;
+    const drift = Math.sin((y / size) * Math.PI * 2 * 3 + (x / size) * 5.1) * 6;
     const n = (Math.random() - 0.5) * 9;
     const v = 238 + stripe + coarse + drift + n;
     d[i] = Math.max(0, v - 6); d[i + 1] = Math.max(0, v - 1); d[i + 2] = Math.min(255, v + 7); d[i + 3] = 255;
@@ -482,13 +486,18 @@ export class Terrain {
     return r > g ? r : g;
   }
   normalAt(x, z, out) {
-    // A box top is flat, so standing on one the snow's normal underneath is the wrong answer --
-    // it would tip the board to a slope that is not there.
-    if (this.rails && this.rails.length && this.railAt(x, z) > heightAt(this.map, x, z)) {
-      if (out) { out[0] = 0; out[1] = 1; out[2] = 0; return out; }
-      return [0, 1, 0];
-    }
-    return normalAt(this.map, x, z, out);
+    const n = normalAt(this.map, x, z, out);
+    if (!this.rails || !this.rails.length) return n;
+    // A box top is flat, so on one the snow's normal underneath is the wrong answer -- it would
+    // tip the board to a slope that is not there. But SWITCHING to flat the instant a sample
+    // crosses onto the rail snaps the board between two orientations, which is half the jitter.
+    // Blend over the first 25 cm of lift instead.
+    const k = railLift(this.rails, x, z, heightAt(this.map, x, z));
+    if (k <= 0) return n;
+    const nx = n[0] * (1 - k), ny = n[1] * (1 - k) + k, nz = n[2] * (1 - k);
+    const len = Math.hypot(nx, ny, nz) || 1;
+    n[0] = nx / len; n[1] = ny / len; n[2] = nz / len;
+    return n;
   }
   slopeAt(x, z) { return slopeDegAt(this.map, x, z); }
 }

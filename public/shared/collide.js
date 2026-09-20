@@ -110,6 +110,15 @@ export function buildRails(map) {
   });
 }
 
+const sm = (t) => { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); };
+
+// The rail surface, and it has to be CONTINUOUS.
+//
+// A hard cutoff at the rail's edge is a 1.5 m cliff in the ground function, and the board's contact
+// is a soft minimum over nine samples spread wider than the rail: as it moves, samples cross that
+// cliff one at a time and the contact height jumps with each one. That is the jitter. The edges now
+// fall to the surrounding snow over the outer quarter of the width, so the surface is continuous
+// everywhere and the samples have something smooth to average.
 export function railHeightAt(rails, wx, wz) {
   let best = -Infinity;
   for (const r of rails) {
@@ -118,9 +127,24 @@ export function railHeightAt(rails, wx, wz) {
     if (t < -r.halfL || t > r.halfL) continue;
     const u = dx * r.px + dz * r.pz;
     if (u < -r.halfW || u > r.halfW) continue;
-    // ramped at both ends, so you ride on rather than meet a step
-    const y = r.top - r.h * (1 - Math.min(1, (r.halfL - Math.abs(t)) / r.ramp));
+    const ends = Math.min(1, (r.halfL - Math.abs(t)) / r.ramp);   // ramped at both ends
+    // Only a 12% roll-off each side. A tall narrow rail has vertical sides whatever you do -- you
+    // cannot taper 1.5 m of drop across 5 cm and call it gentle -- so the taper is not there to
+    // soften the sides, it is there to make the function continuous. What actually decides whether
+    // the board sits still is how much FLAT TOP is left for its contact samples, and every
+    // centimetre spent tapering is a centimetre taken off that.
+    const edge = sm((r.halfW - Math.abs(u)) / (r.halfW * 0.12));
+    const y = r.top - r.h * (1 - ends * edge);
     if (y > best) best = y;
   }
   return best;
+}
+
+// How far above the surrounding snow the rail surface is here, 0 to 1 over the first 25 cm. The
+// normal blends on this rather than switching: a box top is flat, but flipping the normal the
+// instant a sample crosses onto the rail makes the board snap between two orientations.
+export function railLift(rails, wx, wz, groundY) {
+  const y = railHeightAt(rails, wx, wz);
+  if (!(y > groundY)) return 0;
+  return Math.min(1, (y - groundY) / 0.25);
 }

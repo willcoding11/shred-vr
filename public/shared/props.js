@@ -5,6 +5,7 @@ import { mergeGeometries as _merge } from 'three/addons/utils/BufferGeometryUtil
 // Merge that tolerates a mix of indexed / non-indexed parts.
 const mergeGeometries = (parts) => _merge(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
 import { PROP_TYPES, heightAt, normalAt } from './mapformat.js';
+import { loadAssets } from './assets.js';
 
 const tmpM = new THREE.Matrix4(), tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpQ2 = new THREE.Quaternion();
 const tmpS = new THREE.Vector3(), tmpE = new THREE.Euler(), UP = new THREE.Vector3(0, 1, 0), tmpN = new THREE.Vector3();
@@ -167,10 +168,20 @@ function farBirch() {
   ]);
 }
 
+// Hand-modelled geometry, once it has loaded. Anything in here wins over the procedural version
+// of the same prop -- the point of modelling a tree is to use it.
+let hand = {};
+export async function useHandModels(file) {
+  hand = await loadAssets(file);
+  vcache = null; cache = null;          // rebuild the caches around what arrived
+  return Object.keys(hand);
+}
+export function handModelled(type) { return hand[type] || null; }
+
 let vcache = null, vcacheQ = null;
 export function propVariants(quality = 'fast') {
   if (vcache && vcacheQ === quality) return vcache;
-  if (vcache) for (const list of Object.values(vcache)) for (const g of list) g.dispose();
+  if (vcache) for (const list of Object.values(vcache)) for (const g of list) { if (!Object.values(hand).some((l) => l.includes(g))) g.dispose(); }
   vcacheQ = quality;
   const mk = (n, f) => Array.from({ length: n }, (_, i) => { const g = f(i); g.computeBoundingSphere(); return g; });
   vcache = quality === 'real' ? {
@@ -178,6 +189,11 @@ export function propVariants(quality = 'fast') {
     fir: mk(4, (i) => mergeGeometries(realConifer({ height: 9.1 + i * 0.85, rand: rnd(313 + i * 641), snowy: 0.68 + i * 0.08, dark: true }))),
     birch: mk(3, (i) => mergeGeometries(realBirch({ height: 6.2 + i * 0.85, rand: rnd(57 + i * 433) }))),
   } : { pine: mk(1, () => pine()), fir: mk(1, () => fir()), birch: mk(1, () => birch()) };
+  for (const [t, list] of Object.entries(hand)) {
+    if (!list.length || !vcache[t]) continue;
+    for (const g of list) g.computeBoundingSphere();
+    vcache[t] = list;                   // a modelled tree replaces every procedural variant of it
+  }
   return vcache;
 }
 
@@ -188,14 +204,15 @@ export function propGeometries(quality = 'fast') {
   if (cache) for (const g of Object.values(cache)) if (!keep.has(g)) g.dispose();
   cacheQuality = quality;
   const v = propVariants(quality);
+  const h = (t, fallback) => (hand[t] && hand[t][0]) || fallback();
   cache = {
     pine: v.pine[0], fir: v.fir[0], birch: v.birch[0],
     // the two cheaper tiers the renderer swaps in with distance
     'pine:mid': pine(), 'fir:mid': fir(), 'birch:mid': birch(),
     'pine:far': farConifer(false), 'fir:far': farConifer(true), 'birch:far': farBirch(),
-    rock: rockGeo(1.0, '#6b7280', 1), boulder: rockGeo(2.4, '#4b5563', 7),
+    rock: h('rock', () => rockGeo(1.0, '#6b7280', 1)), boulder: h('boulder', () => rockGeo(2.4, '#4b5563', 7)),
     gateA: gate('#ef4444'), gateB: gate('#3b82f6'),
-    flag: flag(), fence: fence(), lamp: lamp(), sign: sign(), snowman: snowman(), hut: hut(), rail: rail(),
+    flag: flag(), fence: h('fence', () => fence()), lamp: h('lamp', () => lamp()), sign: h('sign', () => sign()), snowman: h('snowman', () => snowman()), hut: h('hut', () => hut()), rail: h('rail', () => rail()),
   };
   for (const g of Object.values(cache)) g.computeBoundingSphere();
   return cache;
@@ -227,6 +244,15 @@ export class PropRenderer {
     this.sync();
   }
   setMap(map) { this.map = map; this.sync(); }
+
+  // Throw the meshes away and rebuild them. sync() reuses a mesh whose capacity still fits, which
+  // is right for a prop being added and wrong for the geometry underneath it being swapped -- as
+  // it is when the hand-modelled assets finish loading a second after the map did.
+  refreshGeometry() {
+    for (const m of Object.values(this.meshes)) { this.group.remove(m); m.dispose(); }
+    this.meshes = {};
+    this.sync();
+  }
 
   // Trees are spread across the variant geometries BY POSITION, so a given tree is always the
   // same tree: re-syncing after an edit must not reshuffle the forest.
@@ -286,6 +312,11 @@ export class PropRenderer {
       else geo = geos[key];
       m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : this.material, cap);
       m.userData.cap = cap;
+      // Nothing drawn until cull() has placed them. A new InstancedMesh starts at its full
+      // capacity with identity matrices, which is a frame of every prop stacked at the origin --
+      // invisible while the map loads, very visible when the meshes are rebuilt mid-session
+      // because the hand-modelled assets just arrived.
+      m.count = 0;
       // Per-instance tint. Every conifer was the identical green, because one material with no
       // instanceColor is one colour however many variants of the mesh you build.
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);

@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Which object in props.glb becomes which prop in the game.",
+    "",
+    "The key is the OBJECT NAME in Blender. Name an object after a prop type -- pine, fir, birch,",
+    "rock, boulder, rail, hut, lamp, sign, snowman, fence -- and it is picked up with no entry here",
+    "at all; a trailing .001 or _2 is ignored, so pine, pine.001 and pine_2 are three variants of",
+    "the same prop and the game will spread them across the forest. This file exists for exports",
+    "that still have Blender's default names in them.",
+    "",
+    "`height` is what the object should measure from its base to its top, in metres, at scale 1.",
+    "The loader scales it uniformly to that and sits its base on y=0, so how big you modelled it",
+    "does not matter -- only its proportions do."
+  ],
+  "source": "props.glb",
+  "map": {
+    "Cube.003": { "type": "pine", "height": 8.4 },
+    "Cube.001": { "type": "fir", "height": 10.2 },
+    "Icosphere": { "type": "boulder", "height": 2.8 },
+    "Icosphere.001": { "type": "boulder", "height": 3.2 },
+    "Icosphere.002": { "type": "rock", "height": 1.2 },
+    "Icosphere.003": { "type": "rock", "height": 1.5 },
+
+    "Cylinder.002": { "type": "skip", "why": "rail: 11k triangles and 3.95 m tall -- see asset-check" },
+    "Cylinder.004": { "type": "skip", "why": "rail" },
+    "Cylinder.006": { "type": "skip", "why": "rail" }
+  }
+}

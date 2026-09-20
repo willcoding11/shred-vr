@@ -5,7 +5,7 @@
 // scheme is "your two controllers are your two feet" and there is nothing to map that onto.
 import * as THREE from 'three';
 import { Terrain } from '../shared/terrain.js';
-import { PropRenderer, makeStartGate, makeFinishBanner } from '../shared/props.js';
+import { PropRenderer, makeStartGate, makeFinishBanner, useHandModels } from '../shared/props.js';
 import { Scenery } from '../shared/scenery.js';
 import { LiftRenderer, baseNear, seatAt, unloadSpot, LIFT } from '../shared/lifts.js';
 import { LiveClient } from '../shared/live.js';
@@ -72,6 +72,15 @@ let flash = 0;
 let inXR = false, mapsList = [], telemetryT = 0, propSyncT = 0, settleT = 0;
 let prevX = 0, prevZ = 0;
 let pointers = [];
+
+// Hand-modelled props, if there are any. Deliberately not awaited: the game starts on the
+// procedural geometry and swaps to the modelled version the moment it arrives, so a big glTF
+// never delays getting into the map.
+useHandModels().then((types) => {
+  if (!types.length) return;
+  props?.refreshGeometry();
+  setStatus(`Using modelled props: ${types.join(', ')}`);
+}).catch((e) => console.warn('[assets]', e));
 
 const live = new LiveClient('game');
 

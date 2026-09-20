@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Terrain } from '../shared/terrain.js';
-import { PropRenderer, makeStartGate, makeFinishBanner, propGeometries } from '../shared/props.js';
+import { PropRenderer, makeStartGate, makeFinishBanner, propGeometries, useHandModels } from '../shared/props.js';
 import { LiftRenderer } from '../shared/lifts.js';
 import { Scenery } from '../shared/scenery.js';
 import { heightAt, normalAt, slopeDegAt, bounds, PROP_TYPES, gridToWorld, lowestHeight } from '../shared/mapformat.js';
@@ -68,6 +68,8 @@ export class Viewport {
     if (!this.terrain) { this.terrain = new Terrain(map, { shadows: true, lod: false }); this.scene.add(this.terrain.mesh); }
     else this.terrain.setMap(map);
     if (!this.props) { this.props = new PropRenderer(map, { shadows: true, lod: false }); this.scene.add(this.props.group); }
+    // same swap as the game: start on the procedural props, take the modelled ones when they land
+    if (!this._assets) { this._assets = useHandModels().then((t) => { if (t.length) this.props.refreshGeometry(); }).catch(() => {}); }
     else this.props.setMap(map);
     this.refreshMarkers();
     this.refreshLifts();

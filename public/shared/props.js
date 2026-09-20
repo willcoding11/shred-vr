@@ -298,9 +298,15 @@ export class PropRenderer {
       // to stand in past 110 m is not this tree with fewer triangles, it is a different tree, and
       // seeing your own model give way to mine at a fixed radius is worse than seeing nothing.
       // A null tier means "do not draw", until there is a decimated far version to put there.
+      // A MODELLED tree uses YOUR low-poly version past the full-detail radius, if you exported
+      // one -- that is what `lod: "far"` in the manifest marks. Without one it simply stops being
+      // drawn out there, because the procedural cone-on-a-stick that used to stand in is not this
+      // tree with fewer triangles, it is a different tree, and watching yours give way to mine at
+      // a fixed radius is worse than seeing nothing. A null tier means "do not draw".
       const modelled = !!hand[p.t];
+      const far = hand[p.t + '@far'] ? p.t + '@far' : null;
       const keys = tree && this.lod
-        ? [near, modelled ? null : p.t + '@mid', modelled ? null : p.t + '@far']
+        ? [near, modelled ? far : p.t + '@mid', modelled ? far : p.t + '@far']
         : [near];
       const s = p.s || 1;
       const y = heightAt(this.map, p.x, p.z) - (p.t === 'rail' ? 0 : 0.05) - (tree ? 0.30 * s : 0);
@@ -332,7 +338,9 @@ export class PropRenderer {
       if (m) { this.group.remove(m); m.dispose(); }
       const at = key.indexOf('@'), hash = key.indexOf('#');
       let geo;
-      if (at > 0) geo = geos[key.slice(0, at) + (key.endsWith('@mid') ? ':mid' : ':far')];
+      // A modelled far stand-in wins over the procedural one for the same tier.
+      if (hand[key]) geo = hand[key][0];
+      else if (at > 0) geo = geos[key.slice(0, at) + (key.endsWith('@mid') ? ':mid' : ':far')];
       else if (hash > 0) geo = vars[key.slice(0, hash)][+key.slice(hash + 1)];
       else geo = geos[key];
       m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : this.material, cap);

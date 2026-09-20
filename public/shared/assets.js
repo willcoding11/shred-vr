@@ -130,8 +130,12 @@ export async function loadAssets(file = 'props.glb') {
       const geo = bake(node);
       if (!geo) continue;
       normalise(geo, entry, type);
-      adoptSize(type, geo);
-      (out[type] ||= []).push(geo);
+      // A far model is a stand-in for the same prop past the full-detail radius, not another
+      // variant of it -- it must not end up in the rotation of meshes placed up close, and it
+      // must not be what the physics measures a rail by.
+      const key = entry?.lod === 'far' ? type + '@far' : type;
+      if (key === type) adoptSize(type, geo);
+      (out[key] ||= []).push(geo);
     }
     const summary = Object.entries(out).map(([k, v]) => `${k}x${v.length}`).join(' ');
     if (summary) console.log('[assets] loaded from ' + src + ': ' + summary);

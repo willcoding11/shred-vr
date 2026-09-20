@@ -205,9 +205,22 @@ export function applyBrush(map, b, scratch = {}) {
           // lip faces `b.yaw`. u = along (-1 run-in .. +1 lip), v = across. The rise is packed into the
           // last 70% so the lip angle is ~30 deg above the slope for radius 9 / height 3.
           const lx = (x - cgx) * sp, lz = (z - cgz) * sp;
-          const u = (lx * sy + lz * cy) / b.radius, v = (lx * cy - lz * sy) / (b.radius * 0.62);
+          const u = (lx * sy + lz * cy) / b.radius, v = (lx * cy - lz * sy) / (b.radius * 0.72);
           if (Math.abs(v) >= 1 || u < -1 || u > 1.3) break;
-          const across = 1 - Math.pow(Math.abs(v), 4);        // flat deck, rounded shoulders
+          // THE LIP IS A STRAIGHT, LEVEL LINE. `1 - |v|^4` looked like a flat deck with rounded
+          // shoulders and was neither: it is a dome, so the lip was an arch a metre higher in the
+          // middle than at the edges, and the ramp surface was tilted sideways everywhere off the
+          // centreline. Cross it anywhere but dead centre and that lateral tilt threw you off
+          // line -- which is exactly "sometimes I hit it at the wrong angle and go way off
+          // course", and why it mattered less at speed, where you are on it for less time.
+          //
+          // Now the deck is genuinely flat across 78% of its width and only the last 22% falls
+          // away into the snow, so wherever you cross the lip you leave it pointing the same way.
+          // Flat to 62% of the half-width, then a long smooth shoulder rather than a short steep
+          // one: a short shoulder is a near-cliff, and the surface normal a metre inside it still
+          // leans 19 degrees, so the "flat" deck was only flat in the middle third.
+          const a = Math.abs(v);
+          const across = a <= 0.62 ? 1 : 1 - smooth01((a - 0.62) / 0.38);
           const tt = Math.max(0, ((u + 1) / 1.85 - 0.3) / 0.7);
           // curved run-up, flat lip, then a short knuckle so the back is a slope not a wall
           const along = u <= 0.85 ? Math.pow(Math.min(1, tt), 2.6) : 1 - smooth01((u - 0.85) / 0.45);

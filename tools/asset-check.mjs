@@ -93,9 +93,10 @@ for (const ni of g.scenes[g.scene || 0].nodes) {
   else {
     used += tris;
     const k = want[0] / d[1];
-    if (entry?.fit) note.push('fitted to the game box for this prop (proportions NOT kept)');
-    else if (entry?.length) note.push(`scaled to ${entry.length} m long`);
-    else if (k < 0.7 || k > 1.4) note.push(`rescaled x${k.toFixed(2)} to ${want[0]} m`);
+    if (entry?.length) note.push(`scaled to ${entry.length} m long`);
+    else if (entry?.width) note.push(`scaled to ${entry.width} m wide`);
+    else if (k < 0.7 || k > 1.4) note.push(`rescaled x${k.toFixed(2)} to ${want[0]} m tall`);
+    if (entry?.lod === 'far') note.push('far stand-in, drawn past the full-detail radius');
     if (tris > want[1]) note.push(`${(tris / want[1]).toFixed(0)}x the ${want[1]}-tri budget`);
     if (Math.abs(lo[1]) > 0.02 * Math.max(1, d[1])) note.push(`origin ${lo[1] > 0 ? 'above' : 'below'} the base by ${Math.abs(lo[1]).toFixed(2)} m`);
   }
@@ -110,6 +111,7 @@ for (const ni of g.scenes[g.scene || 0].nodes) {
   const out = {};
   for (const [name, dims, type, entry] of measured) {
     if (!type || type === 'skip') continue;
+    if (entry?.lod) continue;          // a far stand-in is not a variant; it measures nothing
     const f = finalSize(entry, type, dims).map((v) => +v.toFixed(3));
     // Every variant, in the order the loader will see them -- a rail's surface comes from the
     // variant that rail was given, so one number per type would be wrong for two rails in three.

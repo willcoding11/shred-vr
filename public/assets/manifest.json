@@ -4,55 +4,72 @@
     "",
     "The key is the OBJECT NAME in Blender. Name an object after a prop type -- pine, fir, birch,",
     "rock, boulder, rail, hut, lamp, sign, snowman, fence -- and it is picked up with no entry here",
-    "at all; a trailing .001 or _2 is ignored, so pine, pine.001 and pine_2 are three variants of",
-    "the same prop and the game will spread them across the forest. This file exists for exports",
-    "that still have Blender's default names in them.",
+    "at all. Several objects mapped to the same type are VARIANTS, spread across the map.",
     "",
-    "SIZE: give ONE of `height`, `length` or `width`, in metres. `height` suits anything defined by",
-    "how tall it is; `length` suits anything defined by how long it is -- a rail is a rail because",
-    "it is nine metres long, not because of how high off the snow you built it. Either way the",
-    "scale stays UNIFORM, so how big you modelled it does not matter, only its proportions do.",
+    "SIZE: give ONE of `height`, `length` or `width`, in metres. The scale stays UNIFORM whichever",
+    "you pick, so how big you modelled it does not matter, only its proportions do. The rails are",
+    "sized by WIDTH here on purpose: they share one cross-section and differ only in length, which",
+    "is what small/medium/large should mean, and sizing them by length instead would make the long",
+    "one narrower than the board that has to balance on it.",
     "",
-    "`skip` leaves an object out entirely. Run: node tools/asset-check.mjs",
-    "Nothing is ever stretched. A prop is scaled UNIFORMLY, and whatever it then measures is what the game uses -- a modelled rail overwrites the rail's width, height and length, so the board rides the rail you built rather than one squashed to fit."
+    "`lod: \"far\"` marks a low-poly stand-in used past the full-detail radius instead of the real",
+    "mesh. Without one, a modelled prop simply stops being drawn out there.",
+    "",
+    "`skip` leaves an object out entirely. Run: node tools/asset-check.mjs"
   ],
   "source": "props.glb",
   "map": {
-    "Cube.003": {
+    "Tree": {
       "type": "pine",
       "height": 8.4
     },
-    "Cube.001": {
+    "Snowy Tree": {
       "type": "fir",
       "height": 10.2
     },
-    "Icosphere": {
-      "type": "boulder",
-      "height": 2.8
+    "Lower Poly Tree": {
+      "type": "pine",
+      "lod": "far",
+      "height": 8.4
     },
-    "Icosphere.001": {
-      "type": "boulder",
-      "height": 3.2
+    "Lower Poly Snowy Tree": {
+      "type": "fir",
+      "lod": "far",
+      "height": 10.2
     },
-    "Icosphere.002": {
+    "Rock 1": {
       "type": "rock",
       "height": 1.2
     },
-    "Icosphere.003": {
+    "Rock 2": {
       "type": "rock",
       "height": 1.5
     },
-    "Cylinder.002": {
-      "type": "rail",
-      "length": 8
+    "Snowy Rock 1": {
+      "type": "boulder",
+      "height": 2.8
     },
-    "Cylinder.004": {
-      "type": "rail",
-      "length": 10
+    "Snowy Rock 2": {
+      "type": "boulder",
+      "height": 3.2
     },
-    "Cylinder.006": {
+    "Small Rail": {
       "type": "rail",
-      "length": 13
+      "width": 0.32
+    },
+    "Medium Rail": {
+      "type": "rail",
+      "width": 0.32
+    },
+    "Large Rail": {
+      "type": "rail",
+      "width": 0.32
+    },
+    "DONT USE": {
+      "type": "skip"
+    },
+    "DONT USE.001": {
+      "type": "skip"
     }
   }
 }

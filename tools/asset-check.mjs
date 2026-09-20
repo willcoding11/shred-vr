@@ -20,11 +20,16 @@ while (off < buf.length) {
   off += 8 + len;
 }
 
-// what a prop of each type should measure, top to bottom, and what it can afford in triangles
+// What a prop of each type should measure top to bottom, and what it can afford in triangles.
+//
+// The budget is per-prop but it is really about how MANY get placed: a tree is drawn five hundred
+// times so a thousand triangles is half a million, while a rail is drawn five times so a thousand
+// triangles is five thousand and nobody notices. Judge a model by its type's budget, not by its
+// own count.
 const WANT = {
   pine: [8.4, 600], fir: [10.2, 600], birch: [7, 500],
-  rock: [1.2, 250], boulder: [2.8, 400], rail: [0.38, 400],
-  hut: [5.2, 900], lamp: [3.6, 200], sign: [2.2, 150], snowman: [3.1, 250], fence: [1.3, 200],
+  rock: [1.2, 300], boulder: [2.8, 450], rail: [0.38, 1600],
+  hut: [5.2, 1200], lamp: [3.6, 250], sign: [2.2, 200], snowman: [3.1, 300], fence: [1.3, 250],
 };
 const TYPES = Object.keys(WANT);
 const typeFromName = (n) => {
@@ -86,7 +91,9 @@ for (const ni of g.scenes[g.scene || 0].nodes) {
   else {
     used += tris;
     const k = want[0] / d[1];
-    if (k < 0.7 || k > 1.4) note.push(`rescaled x${k.toFixed(2)} to ${want[0]} m`);
+    if (entry?.fit) note.push('fitted to the game box for this prop (proportions NOT kept)');
+    else if (entry?.length) note.push(`scaled to ${entry.length} m long`);
+    else if (k < 0.7 || k > 1.4) note.push(`rescaled x${k.toFixed(2)} to ${want[0]} m`);
     if (tris > want[1]) note.push(`${(tris / want[1]).toFixed(0)}x the ${want[1]}-tri budget`);
     if (Math.abs(lo[1]) > 0.02 * Math.max(1, d[1])) note.push(`origin ${lo[1] > 0 ? 'above' : 'below'} the base by ${Math.abs(lo[1]).toFixed(2)} m`);
   }

@@ -8,21 +8,51 @@
     "the same prop and the game will spread them across the forest. This file exists for exports",
     "that still have Blender's default names in them.",
     "",
-    "`height` is what the object should measure from its base to its top, in metres, at scale 1.",
-    "The loader scales it uniformly to that and sits its base on y=0, so how big you modelled it",
-    "does not matter -- only its proportions do."
+    "SIZE: give ONE of `height`, `length` or `width`, in metres. `height` suits anything defined by",
+    "how tall it is; `length` suits anything defined by how long it is -- a rail is a rail because",
+    "it is nine metres long, not because of how high off the snow you built it. Either way the",
+    "scale stays UNIFORM, so how big you modelled it does not matter, only its proportions do.",
+    "",
+    "`skip` leaves an object out entirely. Run: node tools/asset-check.mjs",
+    "`fit: true` scales each axis separately onto the game's own box for that prop, instead of keeping your proportions. Only rails support it, and only because a rail modelled with legs a quarter of its length cannot reach a 38 cm ride height by any uniform scale."
   ],
   "source": "props.glb",
   "map": {
-    "Cube.003": { "type": "pine", "height": 8.4 },
-    "Cube.001": { "type": "fir", "height": 10.2 },
-    "Icosphere": { "type": "boulder", "height": 2.8 },
-    "Icosphere.001": { "type": "boulder", "height": 3.2 },
-    "Icosphere.002": { "type": "rock", "height": 1.2 },
-    "Icosphere.003": { "type": "rock", "height": 1.5 },
-
-    "Cylinder.002": { "type": "skip", "why": "rail: 11k triangles and 3.95 m tall -- see asset-check" },
-    "Cylinder.004": { "type": "skip", "why": "rail" },
-    "Cylinder.006": { "type": "skip", "why": "rail" }
+    "Cube.003": {
+      "type": "pine",
+      "height": 8.4
+    },
+    "Cube.001": {
+      "type": "fir",
+      "height": 10.2
+    },
+    "Icosphere": {
+      "type": "boulder",
+      "height": 2.8
+    },
+    "Icosphere.001": {
+      "type": "boulder",
+      "height": 3.2
+    },
+    "Icosphere.002": {
+      "type": "rock",
+      "height": 1.2
+    },
+    "Icosphere.003": {
+      "type": "rock",
+      "height": 1.5
+    },
+    "Cylinder.002": {
+      "type": "rail",
+      "fit": true
+    },
+    "Cylinder.004": {
+      "type": "rail",
+      "fit": true
+    },
+    "Cylinder.006": {
+      "type": "rail",
+      "fit": true
+    }
   }
 }

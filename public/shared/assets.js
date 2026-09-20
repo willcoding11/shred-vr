@@ -9,6 +9,7 @@
 // game is exactly as it was.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { PROP_TYPES } from './mapformat.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const BASE = '/assets/';
@@ -58,17 +59,56 @@ function bake(object3d) {
   return parts.length ? mergeGeometries(parts) : null;
 }
 
-// Base on the ground, centred on its own footprint, scaled to `height` metres tall.
-function normalise(geo, height) {
+// Base on the ground, centred on its own footprint, scaled to fit.
+//
+// Sized by whichever dimension you named: `height` for things defined by how tall they are, or
+// `length` for things defined by how long they are -- a rail is a rail because it is eight metres
+// long, not because it is however high off the snow you built it. The scale stays UNIFORM either
+// way, so the proportions you modelled survive; if they are wrong for the game that is worth
+// seeing rather than hiding under a squash.
+function normalise(geo, want) {
   geo.computeBoundingBox();
   const b = geo.boundingBox;
   const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
   geo.translate(-cx, -b.min.y, -cz);
-  const h = b.max.y - b.min.y;
-  if (height > 0 && h > 1e-6) geo.scale(height / h, height / h, height / h);
+  const d = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z];
+  const have = want.by === 'length' ? Math.max(d[0], d[2]) : want.by === 'width' ? Math.min(d[0], d[2]) : d[1];
+  if (want.size > 0 && have > 1e-6) { const k = want.size / have; geo.scale(k, k, k); }
   geo.computeBoundingSphere();
   return geo;
 }
+// FIT: scale each axis separately to land on an exact box, rather than preserving proportions.
+//
+// For most props this would be vandalism. For a rail it is the only thing that works: the game's
+// rail surface is a box 8 m long, 46 cm wide and 38 cm off the snow, and a rail modelled with legs
+// a quarter of its own length cannot reach that by any uniform scale -- at the right length it
+// stands 2.3 m tall, and at the right height it is 1.5 m long. Squashing the legs down is exactly
+// the edit the model needs, so doing it on load is a fair stopgap while the model is what it is.
+function fitBox(geo, target) {
+  geo.computeBoundingBox();
+  const b = geo.boundingBox;
+  const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+  geo.translate(-cx, -b.min.y, -cz);
+  const d = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z];
+  // the model's long axis becomes the box's long axis, whichever way round it was built
+  const along = d[2] >= d[0] ? 2 : 0, across = along === 2 ? 0 : 2;
+  const k = [1, 1, 1];
+  k[across] = target[0] / Math.max(1e-6, d[across]);
+  k[1] = target[1] / Math.max(1e-6, d[1]);
+  k[along] = target[2] / Math.max(1e-6, d[along]);
+  geo.scale(k[0], k[1], k[2]);
+  if (along !== 2) geo.rotateY(Math.PI / 2);      // point it down +z like the procedural one
+  geo.computeVertexNormals();                     // a non-uniform scale does not preserve normals
+  geo.computeBoundingSphere();
+  return geo;
+}
+const FIT_BOX = { rail: () => [PROP_TYPES.rail.railW, PROP_TYPES.rail.railH, PROP_TYPES.rail.len] };
+
+// which dimension an entry asked to be sized by
+const sizing = (entry, type, defaults) => (
+  entry?.length != null ? { by: 'length', size: entry.length }
+    : entry?.width != null ? { by: 'width', size: entry.width }
+      : { by: 'height', size: entry?.height ?? defaults[type] ?? 1 });
 
 let cache = null;
 
@@ -108,7 +148,8 @@ export async function loadAssets(file = 'props.glb') {
       if (!type) continue;
       const geo = bake(node);
       if (!geo) continue;
-      normalise(geo, entry?.height ?? DEFAULT_H[type] ?? 1);
+      if (entry?.fit && FIT_BOX[entry.fit === true ? type : entry.fit]) fitBox(geo, FIT_BOX[entry.fit === true ? type : entry.fit]());
+      else normalise(geo, sizing(entry, type, DEFAULT_H));
       (out[type] ||= []).push(geo);
     }
     const summary = Object.entries(out).map(([k, v]) => `${k}x${v.length}`).join(' ');

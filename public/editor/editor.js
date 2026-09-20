@@ -44,7 +44,7 @@ const view = new Viewport($('view'), $('minimap'));
 // why the mouse stopped orbiting.
 view.onFly = (on) => {
   $('camhint').innerHTML = on
-    ? '<b>WASD</b> move · <b>Space</b> up · <b>Shift</b> down · mouse look · wheel speed · <b>F</b> or <b>Esc</b> to stop'
+    ? '<b>WASD</b> move · <b>Space</b> up · <b>Shift</b> down · <b>Ctrl</b> boost · mouse look · wheel speed · <b>F</b> or <b>Esc</b> to stop'
     : 'Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size · <b>F</b> to fly';
   $('camhint').classList.toggle('flying', on);
 };

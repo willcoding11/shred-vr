@@ -57,7 +57,10 @@ export class Viewport {
     // for standing on it: you cannot get your eye down to where a rider's head actually is, which
     // is the only place half of these decisions can be judged from. WASD to move, Q/E or
     // Space/Shift for up and down, mouse to look, exactly like Minecraft's creative flight.
-    this.fly = { on: false, keys: new Set(), yaw: 0, pitch: 0, speed: 14, vel: new THREE.Vector3() };
+    // 42 m/s cruising, and Ctrl gives 112 -- three times and eight times what it first shipped
+    // at, which was far too slow to cross a kilometre of mountain. The wheel scales the cruise
+    // and the boost follows it.
+    this.fly = { on: false, keys: new Set(), yaw: 0, pitch: 0, speed: 42, boost: 8 / 3, vel: new THREE.Vector3() };
     this._flyBind();
 
     this.minimap = minimapCanvas; this.minimapDirty = true;
@@ -68,7 +71,7 @@ export class Viewport {
 
   _flyBind() {
     const f = this.fly;
-    const wanted = (e) => ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight', 'ControlLeft'].includes(e.code);
+    const wanted = (e) => ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight'].includes(e.code);
     window.addEventListener('keydown', (e) => {
       // Never while something is being typed into -- a map called "Wide Bowl" should not fly you
       // across the hill as you name it.
@@ -92,7 +95,7 @@ export class Viewport {
     // wheel changes how fast you fly, which is the control you actually reach for
     this.canvas.addEventListener('wheel', (e) => {
       if (!f.on) return;
-      f.speed = THREE.MathUtils.clamp(f.speed * (e.deltaY > 0 ? 0.85 : 1.18), 1.5, 160);
+      f.speed = THREE.MathUtils.clamp(f.speed * (e.deltaY > 0 ? 0.85 : 1.18), 2, 500);
       e.preventDefault();
     }, { passive: false });
   }
@@ -131,9 +134,11 @@ export class Viewport {
     const want = _tmpWant.set(0, 0, 0)
       .addScaledVector(_tmpDir, fwd).addScaledVector(_tmpSide, side);
     want.y += up;
-    if (want.lengthSq() > 1e-6) want.normalize().multiplyScalar(f.speed);
-    // a little inertia, so stopping does not feel like hitting a wall
-    f.vel.lerp(want, Math.min(1, dt * 12));
+    const fast = k.has('ControlLeft') || k.has('ControlRight');
+    if (want.lengthSq() > 1e-6) want.normalize().multiplyScalar(f.speed * (fast ? f.boost : 1));
+    // A little inertia, so stopping does not feel like hitting a wall -- but less of it when
+    // boosting, or the lag to top speed eats the boost over any distance short enough to want it.
+    f.vel.lerp(want, Math.min(1, dt * (fast ? 20 : 12)));
     this.camera.position.addScaledVector(f.vel, dt);
   }
 

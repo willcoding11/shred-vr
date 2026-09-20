@@ -40,6 +40,14 @@ const state = {
 };
 
 const view = new Viewport($('view'), $('minimap'));
+// Fly mode swaps the whole camera model, so say so plainly rather than leaving someone wondering
+// why the mouse stopped orbiting.
+view.onFly = (on) => {
+  $('camhint').innerHTML = on
+    ? '<b>WASD</b> move · <b>Space</b> up · <b>Shift</b> down · mouse look · wheel speed · <b>F</b> or <b>Esc</b> to stop'
+    : 'Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size · <b>F</b> to fly';
+  $('camhint').classList.toggle('flying', on);
+};
 // Same reason the game has shredRefs: checking a claim about what is on screen beats squinting.
 window.shredEditor = () => ({ view, state,
   detail: view.terrain ? {

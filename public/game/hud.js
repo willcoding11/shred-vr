@@ -35,10 +35,13 @@ export class Hud {
     this._last = 0; this._drawn = null;
   }
   message(text, sub = '', seconds = 3) { this.msg = text; this.sub = sub; this.msgUntil = performance.now() + seconds * 1000; }
+  // `fps` is drawn whenever it is set, message or not. The panel is otherwise invisible until
+  // there is something to say, which is the point of it -- but a frame counter you can only read
+  // on the desktop is no use at all when the thing being measured is a headset.
   update(s, now) {
     Object.assign(this.state, s);
     const live = this.msg && now < this.msgUntil;
-    const key = live ? this.msg + '\n' + this.sub : '';
+    const key = (live ? this.msg + '|' + this.sub : '') + (this.fps ? '|@' + this.fps : '');
     this.mesh.visible = !!key;
     if (!key || key === this._drawn) return;
     this._drawn = key;
@@ -47,11 +50,21 @@ export class Hud {
     g.fillStyle = 'rgba(8,14,26,0.62)'; roundRect(g, 0, 0, W, H, 26); g.fill();
     g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 2; roundRect(g, 1, 1, W - 2, H - 2, 25); g.stroke();
     g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-    g.fillStyle = 'rgba(255,255,255,0.96)'; g.font = '800 42px Inter, system-ui, sans-serif';
-    g.fillText(this.msg, W / 2, this.sub ? 72 : 92);
-    if (this.sub) {
-      g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = '600 24px Inter, system-ui, sans-serif';
-      g.fillText(this.sub, W / 2, 112);
+    if (live) {
+      g.fillStyle = 'rgba(255,255,255,0.96)'; g.font = '800 42px Inter, system-ui, sans-serif';
+      g.fillText(this.msg, W / 2, this.sub ? 72 : 92);
+      if (this.sub) {
+        g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = '600 24px Inter, system-ui, sans-serif';
+        g.fillText(this.sub, W / 2, 112);
+      }
+    }
+    if (this.fps) {
+      const n = parseInt(this.fps, 10);
+      g.fillStyle = n >= 70 ? '#86efac' : n >= 55 ? '#fde68a' : '#fca5a5';
+      g.font = '800 34px Inter, system-ui, sans-serif';
+      g.textAlign = live ? 'right' : 'center';
+      g.fillText(this.fps, live ? W - 26 : W / 2, live ? 40 : 92);
+      g.textAlign = 'center';
     }
     this.panel.commit();
   }

@@ -96,3 +96,11 @@ body.xr .topbar, body.xr .hud, body.xr .status, body.xr .drawer { display: none;
   #msg { font-size: 30px; }
   .drawer { top: 60px; left: 12px; right: 12px; width: auto; }
 }
+
+
+/* Frame counter, on only while the experimental draw distance is. Fixed width so the number
+   moving between two and three digits does not shuffle the toolbar around. */
+.pill.fps { font-variant-numeric: tabular-nums; min-width: 68px; text-align: center; }
+.pill.fps.good { background: rgba(34,197,94,0.18); color: #86efac; }
+.pill.fps.ok   { background: rgba(250,204,21,0.18); color: #fde68a; }
+.pill.fps.bad  { background: rgba(239,68,68,0.20); color: #fca5a5; }

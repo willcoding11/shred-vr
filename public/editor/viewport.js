@@ -8,6 +8,8 @@ import { LiftRenderer } from '../shared/lifts.js';
 import { Scenery } from '../shared/scenery.js';
 import { heightAt, normalAt, slopeDegAt, bounds, PROP_TYPES, gridToWorld, lowestHeight } from '../shared/mapformat.js';
 
+const _tmpDir = new THREE.Vector3(), _tmpSide = new THREE.Vector3(), _tmpWant = new THREE.Vector3();
+
 // Slab test against the map's bounding box, so a ray that misses the terrain costs nothing.
 function raySlab(o, d, b, [y0, y1]) {
   let tmin = 0, tmax = 1e9;
@@ -51,10 +53,88 @@ export class Viewport {
     this.selection = new THREE.Mesh(new THREE.TorusGeometry(1, 0.08, 8, 40), new THREE.MeshBasicMaterial({ color: 0xfacc15, depthTest: false, transparent: true, opacity: 0.9 }));
     this.selection.rotation.x = Math.PI / 2; this.selection.visible = false; this.selection.renderOrder = 20;
     this.scene.add(this.selection);
+    // FLY MODE. Orbiting a target is the right control for looking at a mountain and the wrong one
+    // for standing on it: you cannot get your eye down to where a rider's head actually is, which
+    // is the only place half of these decisions can be judged from. WASD to move, Q/E or
+    // Space/Shift for up and down, mouse to look, exactly like Minecraft's creative flight.
+    this.fly = { on: false, keys: new Set(), yaw: 0, pitch: 0, speed: 14, vel: new THREE.Vector3() };
+    this._flyBind();
+
     this.minimap = minimapCanvas; this.minimapDirty = true;
     this.raycaster = new THREE.Raycaster();
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  _flyBind() {
+    const f = this.fly;
+    const wanted = (e) => ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight', 'ControlLeft'].includes(e.code);
+    window.addEventListener('keydown', (e) => {
+      // Never while something is being typed into -- a map called "Wide Bowl" should not fly you
+      // across the hill as you name it.
+      const t = document.activeElement;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.code === 'KeyF' && !e.repeat && !e.ctrlKey && !e.metaKey) { this.setFly(!f.on); e.preventDefault(); return; }
+      if (e.code === 'Escape' && f.on) { this.setFly(false); return; }
+      if (f.on && wanted(e)) { f.keys.add(e.code); e.preventDefault(); }
+    });
+    window.addEventListener('keyup', (e) => f.keys.delete(e.code));
+    window.addEventListener('blur', () => f.keys.clear());
+    // Mouse look comes from pointer lock, so the cursor does not wander off the canvas mid-turn.
+    document.addEventListener('pointerlockchange', () => {
+      if (f.on && document.pointerLockElement !== this.canvas) this.setFly(false);
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!f.on || document.pointerLockElement !== this.canvas) return;
+      f.yaw -= e.movementX * 0.0022;
+      f.pitch = THREE.MathUtils.clamp(f.pitch - e.movementY * 0.0022, -1.5, 1.5);
+    });
+    // wheel changes how fast you fly, which is the control you actually reach for
+    this.canvas.addEventListener('wheel', (e) => {
+      if (!f.on) return;
+      f.speed = THREE.MathUtils.clamp(f.speed * (e.deltaY > 0 ? 0.85 : 1.18), 1.5, 160);
+      e.preventDefault();
+    }, { passive: false });
+  }
+
+  setFly(on) {
+    const f = this.fly;
+    if (on === f.on) return;
+    f.on = on;
+    this.controls.enabled = !on;
+    f.keys.clear();
+    f.vel.set(0, 0, 0);
+    if (on) {
+      // start looking where the orbit camera was looking, so it does not jump
+      const dir = new THREE.Vector3().subVectors(this.controls.target, this.camera.position);
+      f.yaw = Math.atan2(-dir.x, -dir.z);
+      f.pitch = Math.asin(THREE.MathUtils.clamp(dir.y / (dir.length() || 1), -1, 1));
+      this.canvas.requestPointerLock?.();
+    } else if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock?.();
+      // leave the orbit target somewhere sensible: just in front of where you stopped
+      this.camera.getWorldDirection(_tmpDir);
+      this.controls.target.copy(this.camera.position).addScaledVector(_tmpDir, 18);
+    }
+    this.onFly?.(on);
+  }
+
+  _flyStep(dt) {
+    const f = this.fly;
+    this.camera.quaternion.setFromEuler(new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ'));
+    const k = f.keys;
+    const fwd = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
+    const side = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
+    const up = (k.has('Space') || k.has('KeyE') ? 1 : 0) - (k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyQ') ? 1 : 0);
+    _tmpDir.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    _tmpSide.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const want = _tmpWant.set(0, 0, 0)
+      .addScaledVector(_tmpDir, fwd).addScaledVector(_tmpSide, side);
+    want.y += up;
+    if (want.lengthSq() > 1e-6) want.normalize().multiplyScalar(f.speed);
+    // a little inertia, so stopping does not feel like hitting a wall
+    f.vel.lerp(want, Math.min(1, dt * 12));
+    this.camera.position.addScaledVector(f.vel, dt);
   }
 
   resize() {
@@ -329,7 +409,7 @@ export class Viewport {
   }
 
   render(dt) {
-    this.controls.update();
+    if (this.fly.on) this._flyStep(dt); else this.controls.update();
     this.ageRider();
     // The editor orbits a target rather than standing somewhere, so the tiles are chosen from the
     // camera. Without this the terrain would draw every tile at full detail, which is what it did

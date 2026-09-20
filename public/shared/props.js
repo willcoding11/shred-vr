@@ -6,6 +6,7 @@ import { mergeGeometries as _merge } from 'three/addons/utils/BufferGeometryUtil
 const mergeGeometries = (parts) => _merge(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
 import { PROP_TYPES, heightAt, normalAt } from './mapformat.js';
 import { loadAssets } from './assets.js';
+import { variantIndex, setRailSizes } from './collide.js';
 
 const tmpM = new THREE.Matrix4(), tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpQ2 = new THREE.Quaternion();
 const tmpS = new THREE.Vector3(), tmpE = new THREE.Euler(), UP = new THREE.Vector3(0, 1, 0), tmpN = new THREE.Vector3();
@@ -174,6 +175,14 @@ let hand = {};
 export async function useHandModels(file) {
   hand = await loadAssets(file);
   vcache = null; cache = null;          // rebuild the caches around what arrived
+  // The rails the physics rides are the rails that just loaded, measured one variant at a time.
+  if (hand.rail?.length) {
+    setRailSizes(hand.rail.map((g) => {
+      g.computeBoundingBox();
+      const b = g.boundingBox, d = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z];
+      return [Math.min(d[0], d[2]), d[1], Math.max(d[0], d[2])];
+    }));
+  }
   return Object.keys(hand);
 }
 export function handModelled(type) { return hand[type] || null; }
@@ -230,6 +239,12 @@ export function propGeometries(quality = 'fast') {
 // distance (it already exists, and at a hundred and fifty metres it is indistinguishable), and a
 // cone on a stick beyond that. Rebuilt only when the viewer has actually moved.
 const TIER_NEAR = 110, TIER_MID = 280, TIER_FAR = 520, TIER_PROP = 460;
+
+// How far the full-detail tier reaches, as a multiple of the above. 1 is the shipping budget;
+// turning it up is the experiment -- see how much a headset will actually take.
+let DETAIL = 1;
+export function setDetail(k) { DETAIL = Math.max(0.5, Math.min(8, k || 1)); }
+export function getDetail() { return DETAIL; }
 const _ORIGIN = new THREE.Vector3();
 
 export class PropRenderer {
@@ -260,7 +275,7 @@ export class PropRenderer {
     if (p.t === 'gate') return gateIndex % 2 ? 'gateB' : 'gateA';
     const v = propVariants(this.quality)[p.t];
     if (!v || v.length < 2) return p.t;
-    return p.t + '#' + (Math.abs(Math.round(p.x * 7.31 + p.z * 13.17)) % v.length);
+    return p.t + '#' + variantIndex(p, v.length);
   }
 
   // Everything that does not change as you move: the world matrix and the tint of every prop, and
@@ -276,7 +291,14 @@ export class PropRenderer {
       const tree = p.t === 'pine' || p.t === 'fir' || p.t === 'birch';
       const near = this.geoKey(p, p.t === 'gate' ? gi++ : 0);
       // With lod off there is only ever the full mesh, so the cheaper tiers are not even built.
-      const keys = tree && this.lod ? [near, p.t + '@mid', p.t + '@far'] : [near];
+      // A MODELLED tree has no cheap tiers, on purpose. The procedural cone-on-a-stick that used
+      // to stand in past 110 m is not this tree with fewer triangles, it is a different tree, and
+      // seeing your own model give way to mine at a fixed radius is worse than seeing nothing.
+      // A null tier means "do not draw", until there is a decimated far version to put there.
+      const modelled = !!hand[p.t];
+      const keys = tree && this.lod
+        ? [near, modelled ? null : p.t + '@mid', modelled ? null : p.t + '@far']
+        : [near];
       const s = p.s || 1;
       const y = heightAt(this.map, p.x, p.z) - (p.t === 'rail' ? 0 : 0.05) - (tree ? 0.30 * s : 0);
       tmpP.set(p.x, y, p.z);
@@ -295,7 +317,7 @@ export class PropRenderer {
       const v = 0.90 + j * 0.20;
       this.items.push({ x: p.x, z: p.z, keys, m: tmpM.elements.slice(),
                         c: [v * (1 - j * 0.05), v, v * (0.97 + j * 0.06)] });
-      for (const k of keys) caps[k] = (caps[k] || 0) + 1;
+      for (const k of keys) if (k) caps[k] = (caps[k] || 0) + 1;
     }
     // (re)build the meshes to fit
     for (const key of Object.keys(this.meshes)) {
@@ -347,7 +369,7 @@ export class PropRenderer {
       if (!viewerPos) return;
       this._viewer = this._viewer || new THREE.Vector3();
       this._viewer.copy(viewerPos);
-      if (!force && this._last.distanceToSquared(viewerPos) < 144) return;   // 12 m
+        if (!force && this._last.distanceToSquared(viewerPos) < 144) return;   // 12 m
       this._last.copy(viewerPos);
     }
     const counts = {};
@@ -357,11 +379,12 @@ export class PropRenderer {
       const d = Math.hypot(it.x - vx, it.z - vz);
       let key;
       if (!this.lod) key = it.keys[0];
-      else if (it.keys.length === 1) { if (d > TIER_PROP) continue; key = it.keys[0]; }
-      else if (d < TIER_NEAR) key = it.keys[0];
-      else if (d < TIER_MID) key = it.keys[1];
-      else if (d < TIER_FAR) key = it.keys[2];
+      else if (it.keys.length === 1) { if (d > TIER_PROP * DETAIL) continue; key = it.keys[0]; }
+      else if (d < TIER_NEAR * DETAIL) key = it.keys[0];
+      else if (d < TIER_MID * DETAIL) key = it.keys[1];
+      else if (d < TIER_FAR * DETAIL) key = it.keys[2];
       else continue;
+      if (!key) continue;                                  // a tier with nothing to draw in it
       const m = this.meshes[key]; if (!m) continue;
       const i = counts[key]++;
       if (i >= m.userData.cap) { counts[key]--; continue; }

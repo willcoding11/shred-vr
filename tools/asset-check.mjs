@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { finalSize } from '../public/shared/propsize.js';
 
 const __d = path.dirname(fileURLToPath(import.meta.url));
 const file = process.argv[2] || path.join(__d, '..', 'public', 'assets', 'props.glb');
@@ -63,6 +64,7 @@ console.log('');
 console.log('object                type      size w x h x d (m)     base      tris   notes');
 
 const notes = [];
+const measured = [];
 let total = 0, used = 0;
 for (const ni of g.scenes[g.scene || 0].nodes) {
   const n = g.nodes[ni];
@@ -98,7 +100,25 @@ for (const ni of g.scenes[g.scene || 0].nodes) {
     if (Math.abs(lo[1]) > 0.02 * Math.max(1, d[1])) note.push(`origin ${lo[1] > 0 ? 'above' : 'below'} the base by ${Math.abs(lo[1]).toFixed(2)} m`);
   }
   console.log(`  ${(n.name || '?').padEnd(20)} ${String(type || '-').padEnd(9)} ${d.map((v) => v.toFixed(2).padStart(6)).join(' ')}  ${lo[1].toFixed(2).padStart(7)} ${String(tris).padStart(7)}   ${note.join('; ')}`);
+  measured.push([n.name, d, type, entry]);
   if (note.length && type && type !== 'skip') notes.push([n.name, note]);
+}
+
+// Publish what each prop ACTUALLY measures once scaled, so the headless tools ride the same rail
+// the game draws. Nothing is stretched to fit a constant any more, so the constant has to follow.
+{
+  const out = {};
+  for (const [name, dims, type, entry] of measured) {
+    if (!type || type === 'skip') continue;
+    const f = finalSize(entry, type, dims).map((v) => +v.toFixed(3));
+    // Every variant, in the order the loader will see them -- a rail's surface comes from the
+    // variant that rail was given, so one number per type would be wrong for two rails in three.
+    (out[type] ||= []).push(f);
+    void name;
+  }
+  fs.writeFileSync(path.join(path.dirname(file), 'sizes.json'), JSON.stringify(out, null, 2));
+  console.log('');
+  console.log('wrote sizes.json  ' + Object.entries(out).map(([k, v]) => `${k} ${v.map((d) => d.join('x')).join(' / ')}`).join('  '));
 }
 
 console.log('');

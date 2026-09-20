@@ -74,17 +74,35 @@ export function bonk(vx, vz, nx, nz, { keep = 0.93, base = 2.2, perSpeed = 0.22,
   return { vx: (vx + sx * push) * keep, vz: (vz + sz * push) * keep, push };
 }
 
+// Which modelled variant a prop uses. Shared with the renderer rather than reimplemented there,
+// because a rail whose SURFACE came from one variant and whose MESH came from another is the exact
+// class of bug that took two rounds to find in the collider code.
+export function variantIndex(p, n) {
+  if (!n || n < 2) return 0;
+  return Math.abs(Math.round(p.x * 7.31 + p.z * 13.17)) % n;
+}
+
+// Sizes of the modelled rails, [width, height, length] per variant, newest measurement wins.
+// The browser fills this from the geometry it loaded; Node reads assets/sizes.json.
+let RAIL_SIZES = null;
+export function setRailSizes(list) { RAIL_SIZES = list && list.length ? list : null; }
+export function railSizes() { return RAIL_SIZES; }
+
 // Rails are SURFACE rather than obstacle -- you ride on top of a box, you do not bump into it --
 // so this returns a ground height, and the rest of the game treats it as ground.
 export function buildRails(map) {
-  const d = PROP_TYPES.rail;
+  const fallback = [[PROP_TYPES.rail.railW, PROP_TYPES.rail.railH, PROP_TYPES.rail.len]];
+  const sizes = RAIL_SIZES || fallback;
   return (map.props || []).filter((p) => p.t === 'rail').map((p) => {
     const sc = p.s || 1, r = p.r || 0;
+    // Each rail is whatever the model it was given actually measures. Nothing is stretched to a
+    // common box, so the box has to follow the model instead.
+    const [W, H, L] = sizes[variantIndex(p, sizes.length)];
     return {
       x: p.x, z: p.z, ax: Math.sin(r), az: Math.cos(r), px: Math.cos(r), pz: -Math.sin(r),
-      halfL: (d.len * sc) / 2, halfW: (d.railW * sc) / 2, h: d.railH * sc,
-      ramp: Math.min(1.4 * sc, d.len * sc * 0.28),
-      top: heightAt(map, p.x, p.z) + d.railH * sc,
+      halfL: (L * sc) / 2, halfW: (W * sc) / 2, h: H * sc,
+      ramp: Math.min(1.4 * sc, L * sc * 0.28),
+      top: heightAt(map, p.x, p.z) + H * sc,
     };
   });
 }

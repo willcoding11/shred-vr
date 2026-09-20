@@ -14,7 +14,7 @@
     "scale stays UNIFORM, so how big you modelled it does not matter, only its proportions do.",
     "",
     "`skip` leaves an object out entirely. Run: node tools/asset-check.mjs",
-    "`fit: true` scales each axis separately onto the game's own box for that prop, instead of keeping your proportions. Only rails support it, and only because a rail modelled with legs a quarter of its length cannot reach a 38 cm ride height by any uniform scale."
+    "Nothing is ever stretched. A prop is scaled UNIFORMLY, and whatever it then measures is what the game uses -- a modelled rail overwrites the rail's width, height and length, so the board rides the rail you built rather than one squashed to fit."
   ],
   "source": "props.glb",
   "map": {
@@ -44,15 +44,15 @@
     },
     "Cylinder.002": {
       "type": "rail",
-      "fit": true
+      "length": 8
     },
     "Cylinder.004": {
       "type": "rail",
-      "fit": true
+      "length": 10
     },
     "Cylinder.006": {
       "type": "rail",
-      "fit": true
+      "length": 13
     }
   }
 }

@@ -14,6 +14,13 @@ import { fileURLToPath } from 'node:url';
 import * as THREE from '../node_modules/three/build/three.module.js';
 import { deserializeMap, heightAt, normalAt, slopeDegAt, PROP_TYPES, bounds } from '../public/shared/mapformat.js';
 import { buildColliders, buildRails, railHeightAt, radiusAt, clears } from '../public/shared/collide.js';
+import { setRailSizes } from '../public/shared/collide.js';
+// The modelled props, if they have been measured. Without this the sim rides the placeholder rail
+// while the game rides the model, and the two disagree in silence.
+try {
+  const sz = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'public', 'assets', 'sizes.json'), 'utf8'));
+  if (sz.rail) setRailSizes(sz.rail);
+} catch { /* no modelled props yet */ }
 import { Rider, SNOW } from '../public/game/physics.js';
 import { makePose, deg } from './pose.js';
 

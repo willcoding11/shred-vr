@@ -101,6 +101,7 @@ export class Terrain {
     // twenty-one tiles sat at full detail and that alone was 97,000 triangles.
     this.LOD_D = lod ? [40, 200, 430] : [Infinity, Infinity, Infinity];
     this.drawDistance = lod ? 1500 : Infinity;
+    this.detail = 1;                        // multiplier on those distances; see setDetail()
     this.chunks = [];
     this.mesh = new THREE.Group();
     this.mesh.name = 'terrain';
@@ -224,13 +225,17 @@ export class Terrain {
       if (d > this.drawDistance) { c.mesh.visible = false; continue; }
       c.mesh.visible = true;
       let want = 0;
-      while (want < this.LOD_D.length && d >= this.LOD_D[want]) want++;
+      while (want < this.LOD_D.length && d >= this.LOD_D[want] * this.detail) want++;
       want = Math.min(c.lods.length - 1, want);
       if (want !== c.lod) { c.lod = want; c.geo.setIndex(c.lods[want]); }
       // only the near tiles are worth putting through the shadow pass
       if (this.selfShadow) c.mesh.castShadow = want === 0;
     }
   }
+
+  // Push the full-detail band further out. The tiles are already built at every level, so this
+  // costs nothing to change -- it just draws more of them at a finer index buffer.
+  setDetail(k) { this.detail = Math.max(0.5, Math.min(8, k || 1)); }
 
   dispose() {
     for (const c of this.chunks) { c.geo.dispose(); this.mesh.remove(c.mesh); }

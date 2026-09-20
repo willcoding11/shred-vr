@@ -5,7 +5,7 @@
 // scheme is "your two controllers are your two feet" and there is nothing to map that onto.
 import * as THREE from 'three';
 import { Terrain } from '../shared/terrain.js';
-import { PropRenderer, makeStartGate, makeFinishBanner, useHandModels } from '../shared/props.js';
+import { PropRenderer, makeStartGate, makeFinishBanner, useHandModels, setDetail } from '../shared/props.js';
 import { Scenery } from '../shared/scenery.js';
 import { LiftRenderer, baseNear, seatAt, unloadSpot, LIFT } from '../shared/lifts.js';
 import { LiveClient } from '../shared/live.js';
@@ -17,7 +17,7 @@ import { Hud, VrMenu, Vignette, fmtTime } from './hud.js';
 import { GameAudio } from './audio.js';
 
 const DEFAULTS = {
-  regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1, quality: 'fast',
+  regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1, quality: 'fast', detail: 1,
   rollGain: 1.0, smoothing: 0.06, sound: true, pixelRatio: 1, boardLength: 1.5, slowMoScale: 0.35,
 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('shred.settings') || '{}') };
@@ -70,6 +70,10 @@ let phase = 'idle';                 // idle (not in VR) | riding | finished
 let runTime = 0, timerOn = false, checkpoint = null, best = null;
 let flash = 0;
 let inXR = false, mapsList = [], telemetryT = 0, propSyncT = 0, settleT = 0;
+// Frame-counter state, declared up here rather than beside tickFps because bindSetting() runs its
+// apply callback once during setup -- which reaches applyDetail() long before a `let` further down
+// the file has initialised, and a temporal-dead-zone throw there takes the whole module with it.
+let fpsOn = false, fpsT = 0, fpsN = 0, fpsVal = 0, lastViewer = null;
 let prevX = 0, prevZ = 0;
 let pointers = [];
 
@@ -125,6 +129,7 @@ function applyMap(m, keepPosition = false) {
   best = Number(localStorage.getItem('shred.best.' + map.id)) || null;
   fillMapSelect();
   if (!inXR) framePreview();
+  applyDetail();
 }
 
 // Rebuild the lift hardware in place. The rider may be sitting on a chair that is about to stop
@@ -334,6 +339,7 @@ bindSetting('setSlowMo', 'slowMoScale', Number, String);
 bindSetting('setLegs', 'legRate', Number, String);
 bindSetting('setRelief', 'relief', Number, String, () => { if (terrain) { terrain.relief = settings.relief; terrain.recolor(); } });
 bindSetting('setQuality', 'quality', (v) => v, (v) => v, applyQuality);
+bindSetting('setDetail', 'detail', Number, String, applyDetail);
 
 // The "Real" preset. Appearance only: nothing here is readable by the physics, and the board
 // behaves identically either way. It costs a filmic tone curve, a scattering sky, a snow shader
@@ -491,6 +497,8 @@ renderer.setAnimationLoop(() => {
   const su = terrain?.material?.userData?.realUniforms;
   if (su && scenery.sunDir) su.uSunDir.value.copy(scenery.sunDir);
   camera.getWorldPosition(tmpV);
+  tickFps(dt);
+  lastViewer = inXR && rider ? rider.boardPos : tmpV;
   if (lifts) lifts.update(dt, inXR && rider ? rider.boardPos : tmpV);
   // Which terrain tiles draw, and at what detail. Keyed off the viewer rather than the camera,
   // because in XR the camera three.js actually renders with is not this one.
@@ -754,6 +762,33 @@ function tuckAmount() {
   if (!controls.pose.valid) return 0;
   const gap = controls.head.pos.y - controls.pose.center.y;
   return THREE.MathUtils.clamp((1.00 - gap) / 0.35, 0, 1);
+}
+
+// Draw distance, and the frame counter that comes with it. Pushing the full-detail band out is
+// the whole experiment, so the number that tells you whether it worked has to be on screen while
+// you do it -- otherwise you are judging frame time by feel, in a headset, which nobody can do.
+function applyDetail() {
+  const k = Number(settings.detail) || 1;
+  setDetail(k);
+  terrain?.setDetail(k);
+  props?.cull(lastViewer, true);
+  const on = k > 1.001;
+  $('fps').hidden = !on;
+  fpsOn = on;
+  if (hud) hud.fps = on ? '-- fps' : null;
+}
+
+function tickFps(dt) {
+  if (!fpsOn) return;
+  fpsN++; fpsT += dt;
+  if (fpsT >= 0.5) {
+    fpsVal = Math.round(fpsN / fpsT);
+    fpsT = 0; fpsN = 0;
+    $('fps').textContent = fpsVal + ' fps';
+    if (hud) hud.fps = fpsVal + ' fps';          // and on the panel, which is the one in the headset
+    // colour it, because the only number that matters is whether it is holding the headset's rate
+    $('fps').className = 'pill fps ' + (fpsVal >= 70 ? 'good' : fpsVal >= 55 ? 'ok' : 'bad');
+  }
 }
 
 function hudState() {

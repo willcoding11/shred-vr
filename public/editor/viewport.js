@@ -3,7 +3,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Terrain } from '../shared/terrain.js';
-import { PropRenderer, makeStartGate, makeFinishBanner, propGeometries, useHandModels } from '../shared/props.js';
+import { PropRenderer, makeStartGate, makeFinishBanner, propGeometries, propVariants, useHandModels } from '../shared/props.js';
+// the ghost should be the variant you are about to place, not always the first one
+const ghostGeo = (key, v) => { const list = propVariants()[key]; return (list && list[v]) || propGeometries()[key]; };
 import { LiftRenderer } from '../shared/lifts.js';
 import { Scenery } from '../shared/scenery.js';
 import { heightAt, normalAt, slopeDegAt, bounds, PROP_TYPES, gridToWorld, lowestHeight } from '../shared/mapformat.js';
@@ -60,7 +62,7 @@ export class Viewport {
     // 42 m/s cruising, and Ctrl gives 112 -- three times and eight times what it first shipped
     // at, which was far too slow to cross a kilometre of mountain. The wheel scales the cruise
     // and the boost follows it.
-    this.fly = { on: false, keys: new Set(), yaw: 0, pitch: 0, speed: 42, boost: 8 / 3, vel: new THREE.Vector3() };
+    this.fly = { on: false, locked: false, drag: false, keys: new Set(), yaw: 0, pitch: 0, speed: 42, boost: 8 / 3, vel: new THREE.Vector3() };
     this._flyBind();
 
     this.minimap = minimapCanvas; this.minimapDirty = true;
@@ -77,18 +79,28 @@ export class Viewport {
       // across the hill as you name it.
       const t = document.activeElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (e.code === 'KeyF' && !e.repeat && !e.ctrlKey && !e.metaKey) { this.setFly(!f.on); e.preventDefault(); return; }
+      // V, not F: F is the Start-gate tool. Bound to F, one keypress both entered flight and
+      // switched tools, so the next click moved the start gate instead of doing what you meant.
+      if (e.code === 'KeyV' && !e.repeat && !e.ctrlKey && !e.metaKey) { this.setFly(!f.on); e.preventDefault(); return; }
       if (e.code === 'Escape' && f.on) { this.setFly(false); return; }
       if (f.on && wanted(e)) { f.keys.add(e.code); e.preventDefault(); }
     });
     window.addEventListener('keyup', (e) => f.keys.delete(e.code));
     window.addEventListener('blur', () => f.keys.clear());
     // Mouse look comes from pointer lock, so the cursor does not wander off the canvas mid-turn.
+    // Losing the lock by pressing Esc means "stop flying"; never having had it does not.
+    // Pointer lock can be refused outright -- an embedded document, a browser that wants another
+    // gesture first -- and flight that dies on refusal would just look broken.
     document.addEventListener('pointerlockchange', () => {
-      if (f.on && document.pointerLockElement !== this.canvas) this.setFly(false);
+      if (f.on && f.locked && document.pointerLockElement !== this.canvas) this.setFly(false);
+      f.locked = document.pointerLockElement === this.canvas;
     });
+    this.canvas.addEventListener('mousedown', (e) => { if (f.on && !f.locked) { f.drag = true; e.preventDefault(); } });
+    window.addEventListener('mouseup', () => { f.drag = false; });
     document.addEventListener('mousemove', (e) => {
-      if (!f.on || document.pointerLockElement !== this.canvas) return;
+      // locked: any movement turns you. unlocked: drag to look, which is the fallback.
+      if (!f.on) return;
+      if (document.pointerLockElement !== this.canvas && !f.drag) return;
       f.yaw -= e.movementX * 0.0022;
       f.pitch = THREE.MathUtils.clamp(f.pitch - e.movementY * 0.0022, -1.5, 1.5);
     });
@@ -112,7 +124,8 @@ export class Viewport {
       const dir = new THREE.Vector3().subVectors(this.controls.target, this.camera.position);
       f.yaw = Math.atan2(-dir.x, -dir.z);
       f.pitch = Math.asin(THREE.MathUtils.clamp(dir.y / (dir.length() || 1), -1, 1));
-      this.canvas.requestPointerLock?.();
+      f.locked = false;
+      Promise.resolve(this.canvas.requestPointerLock?.()).catch(() => { /* drag-to-look instead */ });
     } else if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock?.();
       // leave the orbit target somewhere sensible: just in front of where you stopped
@@ -317,13 +330,16 @@ export class Viewport {
   }
 
   // ---- ghost of the prop being placed ----
-  updateGhost(type, hit, scale = 1, rot = 0) {
+  updateGhost(type, hit, scale, rot, variant = 0) {
     const key = type === 'gate' ? 'gateA' : type;
     if (!hit || !PROP_TYPES[type]) { if (this.ghost) this.ghost.visible = false; return; }
-    if (this.ghostKey !== key) {
+    // Keyed on the VARIANT too, or switching between rail 1 and rail 3 leaves the preview showing
+    // whichever one you happened to look at first.
+    const vkey = key + '#' + variant;
+    if (this.ghostKey !== vkey) {
       if (this.ghost) this.scene.remove(this.ghost);
-      this.ghost = new THREE.Mesh(propGeometries()[key], new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false }));
-      this.ghostKey = key; this.scene.add(this.ghost);
+      this.ghost = new THREE.Mesh(ghostGeo(key, variant), new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false }));
+      this.ghostKey = vkey; this.scene.add(this.ghost);
     }
     this.ghost.visible = true;
     this.ghost.position.set(hit.x, hit.y, hit.z); this.ghost.rotation.set(0, rot, 0); this.ghost.scale.setScalar(scale);

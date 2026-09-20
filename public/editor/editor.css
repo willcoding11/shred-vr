@@ -178,3 +178,12 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 
 /* fly mode: the camera hint doubles as the "you are flying" indicator */
 .camhint.flying { background: rgba(56,189,248,0.16); color: #bae6fd; border-color: rgba(56,189,248,0.35); }
+
+
+/* variant pickers: which of several modelled rails this one is */
+.varrow { display: flex; gap: 6px; margin: 4px 0 8px; }
+.varrow button { flex: 1; padding: 7px 4px; font-size: 12px; border-radius: 9px; cursor: pointer;
+  background: rgba(255,255,255,0.05); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.12); }
+.varrow button:hover { background: rgba(255,255,255,0.09); }
+.varrow button.active { background: rgba(56,189,248,0.18); color: #bae6fd; border-color: rgba(56,189,248,0.45); }
+.rowlabel { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.55; margin-top: 6px; }

@@ -19,6 +19,7 @@ const TOOLS = {
   erase:   { label: 'Reset',        key: '5', kind: 'terrain', color: 0xfb7185, hint: 'Drag to restore the original base slope' },
   noise:   { label: 'Roughen',      key: '6', kind: 'terrain', color: 0xfbbf24, hint: 'Drag to add bumps and chop' },
   kicker:  { label: 'Kicker',       key: '7', kind: 'stamp',   color: 0xfacc15, hint: 'Click to stamp a take-off ramp facing downhill' },
+  rail:    { label: 'Rail',         key: '9', kind: 'prop',    color: 0x94a3b8, prop: 'rail', hint: 'Click to drop a rail down the fall line. The ground under it is levelled for you' },
   bank:    { label: 'Berm',         key: '8', kind: 'terrain', color: 0xf97316, hint: 'Drag along a turn; the berm rises on the chosen side' },
   place:   { label: 'Place',        key: 'Q', kind: 'prop',    color: 0x38bdf8, hint: 'Click to place the selected object' },
   scatter: { label: 'Scatter',      key: 'W', kind: 'prop',    color: 0x22c55e, hint: 'Drag to paint objects' },
@@ -34,6 +35,9 @@ const state = {
   brush: { radius: 12, strength: 0.5, falloff: 0.5, height: 1.8, side: 1 },
   prop: { type: 'pine', scale: 1, randomScale: 0.35, randomRot: true, rot: 0, density: 0.5, gap: 6 },
   selected: -1, dirty: false, saving: false, follow: true, followRider: false,
+  // Orientation for the things you build rather than scatter: rails and kickers. `yaw` is an
+  // offset, so "face downhill" plus a nudge is the common case and a free angle is still possible.
+  feature: { yaw: 0, downhill: true, variant: 0 },
   liftFrom: null,
   undo: [], redo: [],
   stroke: null,
@@ -44,8 +48,8 @@ const view = new Viewport($('view'), $('minimap'));
 // why the mouse stopped orbiting.
 view.onFly = (on) => {
   $('camhint').innerHTML = on
-    ? '<b>WASD</b> move · <b>Space</b> up · <b>Shift</b> down · <b>Ctrl</b> boost · mouse look · wheel speed · <b>F</b> or <b>Esc</b> to stop'
-    : 'Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size · <b>F</b> to fly';
+    ? '<b>WASD</b> move · <b>Space</b> up · <b>Shift</b> down · <b>Ctrl</b> boost · mouse look · wheel speed · <b>V</b> or <b>Esc</b> to stop'
+    : 'Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size · <b>V</b> to fly';
   $('camhint').classList.toggle('flying', on);
 };
 // Same reason the game has shredRefs: checking a claim about what is on screen beats squinting.
@@ -264,6 +268,14 @@ function metaEdit(apply) {
 }
 function applyUndo(entry, dir) {
   const m = state.map;
+  // One click can change two things -- a rail is a prop and the levelled ground under it -- and
+  // undoing half of that leaves a flat patch with nothing standing on it. Undo runs the steps
+  // backwards, redo forwards.
+  if (entry.type === 'multi') {
+    const steps = dir === 'undo' ? [...entry.steps].reverse() : entry.steps;
+    for (const st of steps) applyUndo(st, dir);
+    return;
+  }
   if (entry.type === 'meta') { applyMeta(dir === 'undo' ? entry.before : entry.after); return; }
   if (entry.type === 'terrain') {
     const src = dir === 'undo' ? entry.before : entry.after;
@@ -297,6 +309,8 @@ function setTool(name) {
   if (t.kind !== 'select') { state.selected = -1; view.showSelection(null); }
   $('secBrush').classList.toggle('hidden', !(t.kind === 'terrain' || t.kind === 'stamp' || name === 'scatter' || name === 'eraseProps'));
   $('secKicker').classList.toggle('hidden', name !== 'kicker');
+  $('secFeature').classList.toggle('hidden', !(name === 'kicker' || name === 'rail'));
+  $('featVariantRow').classList.toggle('hidden', name !== 'rail');
   $('secBerm').classList.toggle('hidden', name !== 'bank');
   $('secProp').classList.toggle('hidden', !(name === 'place' || name === 'scatter'));
   $('secScatter').classList.toggle('hidden', name !== 'scatter');
@@ -310,6 +324,11 @@ function setTool(name) {
 $$('.tool[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
 function downhillYaw(x, z) { const n = normalAt(state.map, x, z); return Math.atan2(n[0], n[2]); }
+// What a built feature points at: down the fall line plus your offset, or just your offset.
+function featureYaw(hit) {
+  const f = state.feature;
+  return (f.downhill && hit ? downhillYaw(hit.x, hit.z) : 0) + f.yaw;
+}
 
 let lastHit = null, lastBankPos = null;
 const canvas = $('view');
@@ -326,17 +345,20 @@ canvas.addEventListener('pointerdown', (e) => {
     if (state.tool !== 'bank') strokeTerrain(hit, 1 / 60);
   } else if (state.tool === 'kicker') {
     const before = Float32Array.from(m.heights);
-    const yaw = downhillYaw(hit.x, hit.z);
+    const yaw = featureYaw(hit);
     const r = applyBrush(m, { tool: 'kicker', x: hit.x, z: hit.z, radius: state.brush.radius, height: state.brush.height, yaw });
     if (r) {
       view.terrain.updateRegion(r); queuePatch(r);
       const te = terrainEntry(before, r); if (te) pushUndo(te);
       markDirty({ terrain: true }); view.props.sync();
     }
-  } else if (state.tool === 'place') {
+  } else if (state.tool === 'place' || state.tool === 'rail') {
     const before = snapshotProps();
-    placeProp(hit, { single: true });
-    pushUndo({ type: 'props', before, after: snapshotProps() });
+    const te = placeProp(hit, { single: true, type: TOOLS[state.tool].prop });
+    // One click, one undo: a rail is a prop AND the levelled ground under it, and taking back
+    // only half of that leaves a flat patch with nothing on it.
+    if (te) pushUndo({ type: 'multi', steps: [te, { type: 'props', before, after: snapshotProps() }] });
+    else pushUndo({ type: 'props', before, after: snapshotProps() });
     markDirty({ props: true });
   } else if (state.tool === 'scatter' || state.tool === 'eraseProps') {
     state.stroke = { kind: 'props', before: snapshotProps(), last: hit };
@@ -454,21 +476,29 @@ function strokeProps(hit) {
   }
 }
 function inBounds(x, z) { const b = bounds(state.map); return x > b.minX + 1 && x < b.maxX - 1 && z > b.minZ + 1 && z < b.maxZ - 1; }
-function placeProp(hit, { single = true, sync = true } = {}) {
-  const P = state.prop, def = PROP_TYPES[P.type];
+// Returns the terrain undo entry for anything that reshaped the ground, or null. A rail levels
+// what it sits on, and an edit you cannot take back is worse than no edit.
+function placeProp(hit, { single = true, sync = true, type = null } = {}) {
+  // `type` lets a tool force what it places -- the Rail tool drops a rail whether or not the
+  // palette is showing one, which is the whole point of it having its own button.
+  const P = type ? { ...state.prop, type, randomRot: false, rot: 0 } : state.prop;
+  const def = PROP_TYPES[P.type];
   const jitter = single ? 0 : P.randomScale;
   const s = +(P.scale * (1 + (Math.random() * 2 - 1) * jitter)).toFixed(2);
   let r = P.randomRot ? Math.random() * Math.PI * 2 : P.rot;
   if (P.type === 'gate' || P.type === 'fence' || P.type === 'sign' || P.type === 'hut') r = P.type === 'gate' ? downhillYaw(hit.x, hit.z) : P.randomRot ? downhillYaw(hit.x, hit.z) + Math.PI / 2 : P.rot;
   // A rail points down the hill unless you have set a rotation yourself -- a box you have to
   // approach across the slope is a box nobody rides.
-  if (P.type === 'rail' && P.rot === 0) r = downhillYaw(hit.x, hit.z);
-  state.map.props.push({ t: P.type, x: +hit.x.toFixed(2), z: +hit.z.toFixed(2), s: def.scale ? s : 1, r: +r.toFixed(3) });
+  if (P.type === 'rail') r = featureYaw(hit);
+  const rec = { t: P.type, x: +hit.x.toFixed(2), z: +hit.z.toFixed(2), s: def.scale ? s : 1, r: +r.toFixed(3) };
+  if (P.type === 'rail') rec.v = state.feature.variant;      // which of the modelled rails this is
+  state.map.props.push(rec);
   if (P.type === 'rail') {
     // The box is LEVEL, and so is the surface you ride on it, so the ground underneath has to be
     // level too or it buries its uphill end. Flattening here means a rail dropped anywhere works
     // rather than needing you to prepare the ground first.
     const rad = def.len * (def.scale ? s : 1) * 0.75;
+    const beforeH = Float32Array.from(state.map.heights);
     applyBrush(state.map, { tool: 'smooth', x: hit.x, z: hit.z, radius: rad, strength: 1, dt: 1.0, falloff: 0.55 });
     applyBrush(state.map, { tool: 'smooth', x: hit.x, z: hit.z, radius: rad * 0.6, strength: 1, dt: 1.0, falloff: 0.9 });
     const b = bounds(state.map), sp = state.map.spacing;
@@ -478,8 +508,11 @@ function placeProp(hit, { single = true, sync = true } = {}) {
       x1: Math.min(state.map.size.w - 1, x1), z1: Math.min(state.map.size.h - 1, z1) };
     view.terrain.updateRegion(rect); view.terrain.setRails();
     queuePatch(rect); markDirty({ terrain: true });
+    if (sync) view.props.sync();
+    return terrainEntry(beforeH, rect);
   }
   if (sync) { view.props.sync(); }
+  return null;
 }
 function nearestProp(x, z, maxD) {
   let best = -1, bd = maxD;
@@ -489,15 +522,19 @@ function nearestProp(x, z, maxD) {
 function updateCursor(hit) {
   const t = TOOLS[state.tool]; if (!t) return;
   if (t.kind === 'terrain' || t.kind === 'stamp' || state.tool === 'scatter' || state.tool === 'eraseProps') {
-    const yaw = state.tool === 'kicker' && hit ? downhillYaw(hit.x, hit.z) : null;
+    const yaw = state.tool === 'kicker' && hit ? featureYaw(hit) : null;
     // a bank reaches ~1.67x its radius across, so show that rather than understating it
     const shown = state.tool === 'bank' ? state.brush.radius * 1.67 : state.brush.radius;
     view.updateCursor(hit, shown, { color: t.color, falloff: t.kind === 'terrain' && state.tool !== 'bank' ? state.brush.falloff : 1, yaw });
     view.hideGhost();
-  } else if (state.tool === 'place') {
+  } else if (state.tool === 'place' || state.tool === 'rail') {
     view.updateCursor(null);
-    const P = state.prop; const rot = P.type === 'gate' && hit ? downhillYaw(hit.x, hit.z) : P.randomRot ? 0 : P.rot;
-    view.updateGhost(P.type, hit, P.scale, rot);
+    const forced = TOOLS[state.tool].prop;
+    const P = state.prop, type = forced || P.type;
+    const rot = type === 'rail' ? featureYaw(hit)
+      : type === 'gate' && hit ? downhillYaw(hit.x, hit.z)
+        : P.randomRot ? 0 : P.rot;
+    view.updateGhost(type, hit, forced ? 1 : P.scale, rot, type === 'rail' ? state.feature.variant : 0);
   } else { view.updateCursor(hit, Math.max(3, state.brush.radius * 0.3), { color: t.color, falloff: 1, visible: t.kind === 'select' }); view.hideGhost(); }
 }
 
@@ -518,6 +555,15 @@ bindRange('propRot', state.prop, 'rot', { fmt: (v) => Math.round((v * 180) / Mat
 $('propRandomRot').addEventListener('change', (e) => { state.prop.randomRot = e.target.checked; $('propRotRow').classList.toggle('hidden', e.target.checked); });
 bindRange('scatterDensity', state.prop, 'density', { fmt: (v) => Math.round(v * 100) + '%' });
 bindRange('scatterGap', state.prop, 'gap', { fmt: (v) => v + ' m' });
+// orientation for rails and kickers
+bindRange('featYaw', state.feature, 'yaw', { fmt: (v) => Math.round((v * 180) / Math.PI) + '\u00b0', after: () => updateCursor(lastHit) });
+$('featDownhill').addEventListener('change', (e) => { state.feature.downhill = e.target.checked; updateCursor(lastHit); });
+$$('.railvar').forEach((b) => b.addEventListener('click', () => {
+  state.feature.variant = Number(b.dataset.v);
+  $$('.railvar').forEach((x) => x.classList.toggle('active', x === b));
+  updateCursor(lastHit);
+}));
+
 // prop type grid
 const grid = $('propGrid');
 for (const [key, def] of Object.entries(PROP_TYPES)) {
@@ -534,6 +580,8 @@ function fillSelected() {
   $('selType').textContent = PROP_TYPES[p.t]?.label || p.t;
   $('selScale').value = p.s || 1; $('selScale').parentElement.querySelector('output').textContent = (p.s || 1).toFixed(2) + '×';
   $('selRot').value = p.r || 0; $('selRot').parentElement.querySelector('output').textContent = Math.round(((p.r || 0) * 180) / Math.PI) + '°';
+  $('selVariantRow').classList.toggle('hidden', p.t !== 'rail');
+  $$('.selvar').forEach((b) => b.classList.toggle('active', Number(b.dataset.v) === (p.v ?? 0)));
 }
 function editSelected(fn) {
   const p = state.map?.props[state.selected]; if (!p) return;
@@ -544,6 +592,16 @@ $('selScale').addEventListener('input', (e) => { const p = state.map.props[state
 $('selScale').addEventListener('change', () => { markDirty({ props: true }); });
 $('selRot').addEventListener('input', (e) => { const p = state.map.props[state.selected]; if (p) { p.r = Number(e.target.value); e.target.parentElement.querySelector('output').textContent = Math.round((p.r * 180) / Math.PI) + '°'; view.props.sync(); sendProps(); } });
 $('selRot').addEventListener('change', () => { markDirty({ props: true }); });
+$$('.selvar').forEach((b) => b.addEventListener('click', () => {
+  const p = state.map?.props[state.selected];
+  if (!p || p.t !== 'rail') return;
+  const before = snapshotProps();
+  p.v = Number(b.dataset.v);
+  $$('.selvar').forEach((x) => x.classList.toggle('active', x === b));
+  view.props.sync(); view.terrain.setRails();
+  pushUndo({ type: 'props', before, after: snapshotProps() });
+  markDirty({ props: true });
+}));
 $('selDelete').addEventListener('click', deleteSelected);
 function deleteSelected() {
   if (state.selected < 0) return;

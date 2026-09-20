@@ -79,6 +79,9 @@ export function bonk(vx, vz, nx, nz, { keep = 0.93, base = 2.2, perSpeed = 0.22,
 // class of bug that took two rounds to find in the collider code.
 export function variantIndex(p, n) {
   if (!n || n < 2) return 0;
+  // An explicit choice wins. Without one, the position decides -- which is what you want for a
+  // forest nobody placed by hand, and not what you want for the four rails you put down on purpose.
+  if (Number.isInteger(p.v) && p.v >= 0) return p.v % n;
   return Math.abs(Math.round(p.x * 7.31 + p.z * 13.17)) % n;
 }
 

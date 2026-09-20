@@ -28,7 +28,8 @@
     <symbol id="i-remove" viewBox="0 0 24 24"><path d="M8 8l8 8M16 8l-8 8" /><circle cx="12" cy="12" r="9" /></symbol>
     <symbol id="i-select" viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z" /></symbol>
     <symbol id="i-start" viewBox="0 0 24 24"><path d="M5 21V4" /><path d="M5 4h12l-3 4 3 4H5" /></symbol>
-    <symbol id="i-lift" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18"/><path d="M7 5v4"/><path d="M13 5v4"/><path d="M5 9h4v3H5z"/><path d="M11 9h4v3h-4z"/><path d="M4 21l16-12"/></symbol>
+    <symbol id="i-rail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18"/><path d="M5 10v7"/><path d="M19 10v7"/><path d="M3 13h18"/></symbol>
+<symbol id="i-lift" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18"/><path d="M7 5v4"/><path d="M13 5v4"/><path d="M5 9h4v3H5z"/><path d="M11 9h4v3h-4z"/><path d="M4 21l16-12"/></symbol>
 <symbol id="i-finish" viewBox="0 0 24 24"><path d="M5 21V4" /><path d="M5 4h13v8H5" /><path d="M8 4v8M11 4v8M14 4v8M5 7h13M5 10h13" opacity=".5" /></symbol>
     <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14l-4-4 4-4" /><path d="M5 10h9a5 5 0 0 1 0 10h-3" /></symbol>
     <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l4-4-4-4" /><path d="M19 10h-9a5 5 0 0 0 0 10h3" /></symbol>
@@ -92,6 +93,7 @@
     <div class="group"><span class="gl">Course</span>
       <button class="tool" data-tool="start" title="Start gate (F)"><svg><use href="#i-start"/></svg><span>Start</span></button>
       <button class="tool" data-tool="finish" title="Finish line (G)"><svg><use href="#i-finish"/></svg><span>Finish</span></button>
+      <button class="tool" data-tool="rail" title="Rail (9)"><svg><use href="#i-rail"/></svg><span>Rail</span></button>
       <button class="tool" data-tool="lift" title="Chairlift (L)"><svg><use href="#i-lift"/></svg><span>Lift</span></button>
     </div>
     </div>
@@ -112,7 +114,7 @@
       <span id="riderInfo" class="riderinfo"></span>
     </div>
     <canvas id="minimap" width="220" height="440" title="Click to move the camera"></canvas>
-    <div class="camhint" id="camhint">Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size · <b>F</b> to fly</div>
+    <div class="camhint" id="camhint">Right-drag orbit · Middle-drag pan · Wheel zoom · [ ] brush size · <b>V</b> to fly</div>
   </main>
 
   <aside class="panel">
@@ -125,7 +127,21 @@
     <section id="secKicker" class="hidden">
       <h3>Kicker</h3>
       <label>Lip height <input id="kickerHeight" type="range" min="0.5" max="5" step="0.1" /><output></output></label>
-      <p class="note">Faces downhill automatically. Brush size sets the length of the ramp.</p>
+      <p class="note">Brush size sets the length of the ramp. Aim it under Orientation.</p>
+    </section>
+    <section id="secFeature" class="hidden">
+      <h3>Orientation</h3>
+      <label class="check"><input id="featDownhill" type="checkbox" checked /> Face downhill</label>
+      <label>Turn <input id="featYaw" type="range" min="-3.142" max="3.142" step="0.02" /><output></output></label>
+      <div id="featVariantRow" class="hidden">
+        <div class="rowlabel">Rail</div>
+        <div class="varrow">
+          <button class="railvar active" data-v="0">1 &middot; short</button>
+          <button class="railvar" data-v="1">2 &middot; mid</button>
+          <button class="railvar" data-v="2">3 &middot; long</button>
+        </div>
+      </div>
+      <p class="note">Turn is added on top of the fall line. Untick to aim it yourself.</p>
     </section>
     <section id="secBerm" class="hidden">
       <h3>Berm</h3>
@@ -153,6 +169,12 @@
         <div class="seltype" id="selType">—</div>
         <label>Scale <input id="selScale" type="range" min="0.4" max="2.5" step="0.05" /><output></output></label>
         <label>Rotation <input id="selRot" type="range" min="0" max="6.283" step="0.05" /><output></output></label>
+        <div id="selVariantRow" class="hidden">
+          <div class="rowlabel">Rail</div>
+          <div class="varrow">
+            <button class="selvar" data-v="0">1</button><button class="selvar" data-v="1">2</button><button class="selvar" data-v="2">3</button>
+          </div>
+        </div>
         <button class="btn ghost danger full" id="selDelete">Delete object</button>
       </div>
     </section>

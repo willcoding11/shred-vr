@@ -407,5 +407,198 @@ console.log(H('15. Terminal speeds land where the literature says they should.')
   }
 }
 
+console.log(H('16. A rail is snow that has stopped gripping.'));
+{
+  // Rails are terrain now, distinguished only by what the surface is made of. Two things have to
+  // follow from that, or the slip factor is decoration: steel has to hold speed better than snow,
+  // and an edge has to find almost nothing to bite on.
+  const run = (slip, pose, secs = 3) => {
+    const r = new Rider(planarTerrain(6, slip));
+    r.snow = SNOW.groomed;
+    r.reset(0, 0, 0, pose);
+    r.vel.set(0, 0, 11);                       // straight down the fall line at 11 m/s
+    let peakLat = 0;
+    for (let i = 0; i < secs * 240; i++) {
+      r.step(1 / 240, pose, null, 0, HEAD);
+      peakLat = Math.max(peakLat, Math.abs(r.lateralG));
+    }
+    return { kmh: r.speed * 3.6, x: r.boardPos.x, peakLat };
+  };
+  const straight = flatOnSlope(6, 0);
+  const snow = run(0, straight), steel = run(1, straight);
+  check('a grind holds more speed than the same run on snow', steel.kmh > snow.kmh + 1,
+    `${steel.kmh.toFixed(1)} km/h on steel vs ${snow.kmh.toFixed(1)} on snow`);
+
+  // Now genuinely on edge -- a board merely POINTED across the hill drifts the same either way,
+  // so displacement measures heading, not grip. What the edge does is generate lateral force.
+  const edged = makePose({ yaw: deg(25), edge: deg(-32), pitch: deg(6) });
+  const snowEdge = run(0, edged), steelEdge = run(1, edged);
+  check('an edge bites on snow', snowEdge.peakLat > 0.35, `${snowEdge.peakLat.toFixed(2)} g`);
+  check('and finds far less on steel', steelEdge.peakLat < snowEdge.peakLat * 0.6,
+    `${steelEdge.peakLat.toFixed(2)} g vs ${snowEdge.peakLat.toFixed(2)} g`);
+
+  // And none of it may have touched snow, which is the only thing here that was ever finished.
+  const plain = run(0, 0);
+  check('snow behaves exactly as it did before rails had a surface',
+    Math.abs(plain.kmh - snow.kmh) < 1e-9, `${plain.kmh.toFixed(3)} km/h`);
+}
+
+console.log(H('17. A board lying ACROSS a rail is still on it.'));
+{
+  // The way you actually ride a rail is perpendicular to it, and that puts only three of the
+  // board's nine contact samples on the deck while six hang over snow a metre below. The soft
+  // minimum used to divide by a fixed nine, so it reported the board floating bridge*ln(3) above
+  // a deck it was resting on -- and since only penetration gets resolved, the board sank by
+  // exactly that much and at speed crossed contactEps into reading as airborne. It fell through.
+  const DECK = 1.25, HALFW = 0.16;
+  const strip = {                       // a rail running along x, snow either side of it
+    heightAt: (x, z) => (Math.abs(z) <= HALFW ? DECK : 0),
+    normalAt: (x, z, o = [0, 1, 0]) => { o[0] = 0; o[1] = 1; o[2] = 0; return o; },
+    slopeAt: () => 0,
+    slipAt: (x, z) => (Math.abs(z) <= HALFW ? 1 : 0),
+    // The snow under it all, with the bar taken out -- what a head has to answer to.
+    ground: () => (() => 0),
+  };
+  // The strip runs along x, so a board yawed 90 lies in line with it and one yawed 0 lies across
+  // it. Either way you are travelling ALONG the rail -- it is the board that turns, not the run.
+  const sink = (yawDeg, speed) => {
+    const pose = makePose({ yaw: deg(yawDeg) });
+    const r = new Rider(strip);
+    r.snow = SNOW.groomed;
+    r.reset(0, 0, 0, pose);             // (x, z), and the board lands on whatever is there
+    r.vel.set(speed, 0, 0);
+    let lowest = 0;
+    for (let i = 0; i < 240; i++) {     // one second of riding it
+      r.step(1 / 240, pose, null, 0, HEAD);
+      lowest = Math.min(lowest, r.boardPos.y - DECK);
+    }
+    return { sank: -lowest, grounded: r.grounded };
+  };
+  // In line with the bar: nine of nine samples on the deck, which always worked.
+  const along = sink(90, 12);
+  check('riding it in line with the bar stays on top', along.sank < 0.05 && along.grounded,
+    `sank ${(along.sank * 100).toFixed(1)} cm`);
+  // Across it: three of nine. This is the one that dropped you through.
+  for (const speed of [0, 12, 20]) {
+    const across = sink(0, speed);
+    check(`lying across it at ${speed} m/s stays on top too`, across.sank < 0.05 && across.grounded,
+      `sank ${(across.sank * 100).toFixed(1)} cm, ${across.grounded ? 'grounded' : 'AIRBORNE'}`);
+  }
+  // Sliding into the SIDE of one. A rail stands a metre and a half proud, so its side is a wall,
+  // and a heightfield resolves a wall by lifting you out of it -- which launched the rider two
+  // metres in three frames and then dropped them again, over and over.
+  {
+    const r = new Rider(strip);
+    r.snow = SNOW.groomed;
+    r.reset(0, HALFW + 0.6, 0, makePose({ yaw: deg(90) }));   // on the snow, beside the bar
+    const start = r.boardPos.y;
+    let worstStep = 0, prev = r.boardPos.y;
+    for (let i = 0; i < 240; i++) {
+      r.vel.z = -1.2;                        // drifting steadily into the side of it
+      r.step(1 / 240, makePose({ yaw: deg(90) }), null, 0, HEAD);
+      worstStep = Math.max(worstStep, r.boardPos.y - prev);
+      prev = r.boardPos.y;
+    }
+    check('sliding into the side of one is a bump, not a launch', worstStep < 0.05,
+      `worst single step ${(worstStep * 100).toFixed(1)} cm, from ${start.toFixed(2)} m`);
+  }
+
+  // How fast you ride up that wall must not depend on the frame rate. As a fixed distance per
+  // STEP it was three times quicker at 240 Hz than at 72, which is the hazard holdTau is written
+  // to avoid, and no other test here touches a rail.
+  {
+    const climb = (hz) => {
+      const r = new Rider(strip);
+      r.snow = SNOW.groomed;
+      r.reset(0, HALFW + 0.6, 0, makePose({ yaw: deg(90) }));
+      const y0 = r.boardPos.y;
+      for (let i = 0; i < hz; i++) {          // one second either way
+        r.vel.z = -1.2;
+        r.step(1 / hz, makePose({ yaw: deg(90) }), null, 0, HEAD);
+      }
+      return r.boardPos.y - y0;
+    };
+    const slow = climb(72), fast = climb(240);
+    check('and it climbs at the same rate however fast the physics runs',
+      Math.abs(slow - fast) < 0.12, `${(slow * 100).toFixed(0)} cm at 72 Hz, ${(fast * 100).toFixed(0)} cm at 240 Hz`);
+  }
+
+  // A boardslide is the board dead across the bar, which in snow is a full-on plough and the
+  // hardest braking there is. On steel there is nothing to plough, and the bar used to eat almost
+  // all of your speed -- which is the opposite of what a rail is for.
+  {
+    const slide = (slip, edgeDeg = 18) => {
+      // On some edge, which is what makes it plough. Dead flat there is no bite on either surface
+      // and the question does not arise.
+      // yaw 0 points the nose along z while the travel below is along x, so the board really is
+      // sideways on. Pointing it along the direction of travel is just riding, and scrubs nothing.
+      const pose = makePose({ yaw: 0, edge: deg(edgeDeg) });
+      const t2 = { heightAt: strip.heightAt, normalAt: strip.normalAt, slopeAt: strip.slopeAt,
+                   ground: strip.ground, slipAt: () => slip };
+      const r = new Rider(t2);
+      r.snow = SNOW.groomed;
+      r.reset(0, 0, 0, pose);
+      r.vel.set(9, 0, 0);                        // 32 km/h along the bar
+      for (let i = 0; i < 240; i++) r.step(1 / 240, pose, null, 0, HEAD);
+      return r.speed * 3.6;
+    };
+    const onSteel = slide(1), onSnow = slide(0);
+    check('an edged board across the hill scrubs hard on snow', onSnow < 20, `${onSnow.toFixed(0)} km/h from 32`);
+    check('but on steel there is nothing to plough, so it keeps its speed', onSteel > onSnow * 1.5,
+      `${onSteel.toFixed(0)} km/h on steel against ${onSnow.toFixed(0)} on snow, both from 32`);
+  }
+
+  // GETTING ON IT. This is the one that was missing, and its absence let a cap meant to stop the
+  // launching quietly make the rail unrideable instead -- the board crossed it as if it were not
+  // there. A rail's end ramp rises about 1.05 m per metre travelled; you have to be able to ride
+  // up that at any speed you would actually arrive at.
+  {
+    const TOP = DECK, RAMP = 1.4, GRADE = TOP / RAMP;
+    const ramped = {
+      // flat, then a ramp rising over RAMP metres, then the deck
+      heightAt: (x, z) => (x <= 0 ? 0 : x >= RAMP ? TOP : (x / RAMP) * TOP),
+      normalAt: (x, z, o = [0, 1, 0]) => {
+        const g = x > 0 && x < RAMP ? GRADE : 0, l = Math.hypot(g, 1);
+        o[0] = -g / l; o[1] = 1 / l; o[2] = 0; return o;
+      },
+      slopeAt: () => 0,
+      slipAt: () => 0,
+      ground: () => ((x, z) => (x <= 0 ? 0 : x >= RAMP ? TOP : (x / RAMP) * TOP)),
+    };
+    const climb = (speed, tuning) => {
+      const pose = makePose({ yaw: deg(90) });
+      const r = new Rider(ramped, tuning);
+      r.snow = SNOW.groomed;
+      r.reset(-3, 0, 0, pose);
+      r.vel.set(speed, 0, 0);
+      let top = -Infinity;
+      for (let i = 0; i < 240 * 2; i++) { r.step(1 / 240, pose, null, 0, HEAD); top = Math.max(top, r.boardPos.y); }
+      return top;
+    };
+    for (const speed of [6, 9, 13]) {
+      // The allowance must not be what stops you. Compare against having it effectively removed:
+      // whatever the ramp costs you in energy is the ramp's business, but the two have to agree.
+      // A cap of 0.9 m/s -- which is what shipped for an hour -- gave 4 cm here against 125.
+      const shipped = climb(speed, undefined), free = climb(speed, { climbGrade: 60, climbFloor: 60 });
+      check(`the climb allowance does not limit an end ramp at ${speed} m/s`,
+        Math.abs(shipped - free) < 0.05,
+        `${shipped.toFixed(2)} m against ${free.toFixed(2)} m with it removed, on a ${TOP.toFixed(2)} m deck`);
+    }
+    // And you do get up it at a speed you would actually hit one at.
+    check('and 9 m/s carries you over the top of it', climb(9, undefined) > TOP,
+      `${climb(9, undefined).toFixed(2)} m of ${TOP.toFixed(2)}`);
+  }
+
+  // And it must not have become sticky in the other direction: a board genuinely in the air
+  // still has to read as airborne.
+  const air = new Rider(strip);
+  air.snow = SNOW.groomed;
+  const pose = makePose({ yaw: 0 });
+  air.reset(0, 0, 0, pose);
+  air.pos.y += 3;
+  air.step(1 / 240, pose, null, 0, HEAD);
+  check('three metres up still reads as airborne', !air.grounded);
+}
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures === 0 ? 0 : 1);

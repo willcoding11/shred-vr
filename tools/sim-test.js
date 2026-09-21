@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../node_modules/three/build/three.module.js';
 import { deserializeMap, heightAt, normalAt, slopeDegAt, PROP_TYPES, bounds } from '../public/shared/mapformat.js';
-import { buildColliders, buildRails, railHeightAt, railLift, radiusAt, clears } from '../public/shared/collide.js';
+import { buildColliders, buildRails, railHeightAt, railLift, radiusAt, clears, railSlipAt } from '../public/shared/collide.js';
 import { setRailSizes } from '../public/shared/collide.js';
 // The modelled props, if they have been measured. Without this the sim rides the placeholder rail
 // while the game rides the model, and the two disagree in silence.
@@ -31,13 +31,19 @@ const map = deserializeMap(fs.readFileSync(path.join(__dirname, '..', 'maps', `$
 // Rails, colliders and what hitting one costs all come from the same module the game uses. They
 // used to be a second copy here, and the copy carried the same bug: a collider with no height.
 const railList = buildRails(map);
-const onRail = (x, z) => railList.length && railHeightAt(railList, x, z) > heightAt(map, x, z);
+const groundAt = (x, z) => heightAt(map, x, z);
+const onRail = (x, z) => railList.length && railHeightAt(railList, x, z, groundAt) > heightAt(map, x, z);
 const terrain = {
-  heightAt: (x, z) => { const g = heightAt(map, x, z); const r = railHeightAt(railList, x, z); return r > g ? r : g; },
+  heightAt: (x, z) => { const g = heightAt(map, x, z); const r = railHeightAt(railList, x, z, groundAt); return r > g ? r : g; },
+  // The snow with the rails taken out. Without this the head constraint answers to a bar it is
+  // merely passing over, and the sim quietly keeps a bug the game no longer has.
+  ground: () => groundAt,
+  // The sim has to offer the same surface the game does, or it is measuring different physics.
+  slipAt: (x, z) => (railList.length ? railSlipAt(railList, x, z) : 0),
   normalAt: (x, z, o) => {
     const n = normalAt(map, x, z, o);
     if (!railList.length) return n;
-    const k = railLift(railList, x, z, heightAt(map, x, z));      // blended, as in the game
+    const k = railLift(railList, x, z, heightAt(map, x, z), groundAt);      // blended, as in the game
     if (k <= 0) return n;
     const nx = n[0] * (1 - k), ny = n[1] * (1 - k) + k, nz = n[2] * (1 - k);
     const l = Math.hypot(nx, ny, nz) || 1;

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Grind mixer · Shred VR</title>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/jsm/" } }
+</script>
+<link rel="stylesheet" href="mixer.css" />
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><span class="logo"></span>Grind mixer</div>
+  <div class="spacer"></div>
+  <button id="btnPlay" class="btn primary">Start the grind</button>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>The grind</h2>
+    <p class="note">
+      This is the rail sound the game plays, running live. Move a slider and you hear it
+      immediately &mdash; no reload, no riding to a rail to find out. It is the one sound in the
+      project with nothing real to check it against, so it has to be dialled in by ear.
+    </p>
+    <div id="presets" class="shots"></div>
+    <div id="grid"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Conditions</h2>
+    <p class="note">The wind and the board rumble ride along underneath at whatever speed you
+      set, so you are hearing the grind in the mix it actually arrives in &mdash; not on its own.</p>
+    <div id="conds" class="grid"></div>
+    <label class="check"><input id="duck" type="checkbox" /> Duck the carve and skid under it
+      <em>the game does this, because both at once reads as neither &mdash; uncheck to hear why</em></label>
+  </section>
+
+  <section class="panel">
+    <h2>One-shots</h2>
+    <p class="note">The knocks either side of a grind, and the rest of the game's hits, for
+      comparison &mdash; a clack that sounds wrong next to a crash is worth knowing about.</p>
+    <div class="shots">
+      <button class="btn" data-shot="railOn">Rail on</button>
+      <button class="btn" data-shot="railOff">Rail off</button>
+      <button class="btn" data-shot="jump">Jump</button>
+      <button class="btn" data-shot="land">Land</button>
+      <button class="btn" data-shot="stumble">Stumble</button>
+      <button class="btn" data-shot="crash">Crash</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>What you settled on</h2>
+    <p class="note">Send me this and I will make it the default. Nothing here is saved anywhere
+      yet &mdash; closing the tab loses it.</p>
+    <pre id="out"></pre>
+    <div class="row">
+      <button id="btnReset" class="btn ghost">Reset to current defaults</button>
+      <button id="btnCopy" class="btn">Copy</button>
+    </div>
+    <p id="status" class="status"></p>
+  </section>
+</main>
+
+<script type="module" src="mixer.js"></script>
+</body>
+</html>

@@ -4,7 +4,7 @@
 // boulder, a conifer was a full-width pillar all the way to its tip, and there was no gentle
 // option at all -- every contact was an 88% brake. Run: node tools/collide-test.mjs
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
-import { deserializeMap, heightAt, PROP_TYPES } from '../public/shared/mapformat.js';
+import { deserializeMap, heightAt, normalAt, PROP_TYPES } from '../public/shared/mapformat.js';
 import { buildColliders, radiusAt, clears, bonk, buildRails, railHeightAt, setRailSizes } from '../public/shared/collide.js';
 import { applySizes } from '../public/shared/propsize.js';
 
@@ -27,6 +27,7 @@ const ok = (cond, label, detail = '') => {
 };
 
 const map = load('alpine-bowl');
+const gAt = (x, z) => heightAt(map, x, z);
 
 console.log('HEIGHT: over it is past it');
 {
@@ -81,18 +82,20 @@ console.log('RAILS: a box is ground');
   ok(rails.length > 0, 'the map has rails on it', `${rails.length} of them`);
   let worstErr = 0, offCount = 0;
   for (const r of rails) {
-    const on = railHeightAt(rails, r.x, r.z);
+    const on = railHeightAt(rails, r.x, r.z, gAt);
     const ground = heightAt(map, r.x, r.z);
     worstErr = Math.max(worstErr, Math.abs(on - ground - r.h));
     // one metre to the side, along the perpendicular, there must be no rail at all
-    if (railHeightAt(rails, r.x + r.px * (r.halfW + 1), r.z + r.pz * (r.halfW + 1)) > -1e9) offCount++;
+    const ox = r.x + r.px * (r.halfW + 1), oz = r.z + r.pz * (r.halfW + 1);
+    if (railHeightAt(rails, ox, oz, gAt) > -1e9) offCount++;
   }
   ok(worstErr < 0.02, 'the surface sits exactly railH above the ground at the centre',
     `worst error ${(worstErr * 100).toFixed(1)} cm`);
   ok(offCount === 0, 'and there is nothing to stand on beside it');
   // the ends ramp down to the snow rather than presenting a step
   const r0 = rails[0];
-  const endY = railHeightAt(rails, r0.x + r0.ax * (r0.halfL - 0.02), r0.z + r0.az * (r0.halfL - 0.02));
+  const ex = r0.x + r0.ax * (r0.halfL - 0.02), ez = r0.z + r0.az * (r0.halfL - 0.02);
+  const endY = railHeightAt(rails, ex, ez, gAt);
   ok(endY - (r0.top - r0.h) < 0.06, 'the ends ramp down to the snow',
     `${((endY - (r0.top - r0.h)) * 100).toFixed(0)} cm above the snow at the tip`);
   // The board is 25 cm across; a rail narrower than that cannot carry all of its contact samples.
@@ -103,7 +106,7 @@ console.log('RAILS: a box is ground');
   // a soft minimum over nine samples: with n of the nine on the rail it floats bridge*ln(9/n)
   // above it, so a sample crossing on or off moves the board. Sides that steep are what a rail
   // IS -- the number to watch is how much flat there is between them.
-  const p = (o) => railHeightAt(rails, r0.x + r0.px * o, r0.z + r0.pz * o);
+  const p = (o) => { const x = r0.x + r0.px * o, z = r0.z + r0.pz * o; return railHeightAt(rails, x, z, gAt); };
   const top = p(0);
   let flat = 0;
   for (let u = 0; u <= r0.halfW; u += 0.005) { if (top - p(u) > 0.01) break; flat = u; }
@@ -115,14 +118,94 @@ console.log('RAILS: a box is ground');
   let dips = 0;
   for (let u = -flat; u <= flat; u += 0.005) if (p(u) < top - 0.005) dips++;
   ok(dips === 0, 'and is one flat plateau, not a ridge with a dip in it');
-  // the same along its length, over the end ramps
+  // The same along its length, over the end ramps. The bar follows the hill now, so its absolute
+  // height changes as fast as the slope does -- what has to be smooth is the bar's own profile,
+  // which is how far it stands ABOVE the snow.
+  const above = (o) => {
+    const x = r0.x + r0.ax * o, z = r0.z + r0.az * o;
+    return Math.max(0, railHeightAt(rails, x, z, gAt) - heightAt(map, x, z));
+  };
   let worstEnd = 0;
   for (let t2 = -r0.halfL * 1.05; t2 <= r0.halfL * 1.05; t2 += 0.01) {
-    const p = (o) => railHeightAt(rails, r0.x + r0.ax * o, r0.z + r0.az * o);
-    const a = Math.max(p(t2), r0.top - r0.h), b = Math.max(p(t2 + 0.01), r0.top - r0.h);
-    worstEnd = Math.max(worstEnd, Math.abs(b - a));
+    worstEnd = Math.max(worstEnd, Math.abs(above(t2 + 0.01) - above(t2)));
   }
   ok(worstEnd < 0.06, 'nor along it, over the end ramps', `worst ${(worstEnd * 100).toFixed(1)} cm per cm`);
+
+  // And the thing that caused the launching: the deck may never float above the snow it is on.
+  let float = 0;
+  for (const q of rails) {
+    for (let o = -q.halfL; o <= q.halfL; o += 0.25) {
+      const x = q.x + q.ax * o, z = q.z + q.az * o;
+      float = Math.max(float, railHeightAt(rails, x, z, gAt) - heightAt(map, x, z));
+    }
+  }
+  ok(float < PROP_TYPES.rail.railH * 2.5, 'no rail floats above the snow it sits on',
+    `worst standoff ${float.toFixed(2)} m, and the bar is ${PROP_TYPES.rail.railH.toFixed(2)} m tall`);
+}
+
+// ---------------------------------------------------------------- a rail is just raised ground
+// It was a special case for a while, asked to work out whether the rider was above it or below it,
+// and that produced two opposite bugs in two days: first it stood you on a box you were passing
+// under, then it let you ride straight through all six rails on the map. It is a heightfield with
+// a slippery surface, and it knows nothing about where anybody is.
+{
+  const { Terrain } = await import('../public/shared/terrain.js');
+  const rails = buildRails(map);
+  if (!rails.length) {
+    console.log('  --  no rails on this map, skipped');
+  } else {
+    const r = rails[0];
+    const T = Object.create(Terrain.prototype);
+    T.map = map; T.rails = rails;
+    const ground = heightAt(map, r.x, r.z);
+    const deck = railHeightAt(rails, r.x, r.z, gAt);
+    ok(deck > ground + 0.1, 'the test rail stands proud of the snow',
+       `deck ${deck.toFixed(2)} m vs ground ${ground.toFixed(2)} m, ${(deck - ground).toFixed(2)} m proud`);
+
+    ok(T.heightAt.length === 2, 'heightAt asks for x and z and nothing else', `arity ${T.heightAt.length}`);
+    ok(Math.abs(T.heightAt(r.x, r.z) - deck) < 1e-6, 'and the deck is simply the ground there');
+    let dead = 0;
+    for (const q of rails) {
+      if (Math.abs(T.heightAt(q.x, q.z) - railHeightAt(rails, q.x, q.z, gAt)) > 1e-6) dead++;
+    }
+    ok(dead === 0, 'every rail on the map is solid', `${rails.length - dead} of ${rails.length}`);
+
+    // Off to the side there is nothing but snow, and the two have to meet continuously.
+    const off = (o) => T.heightAt(r.x + r.px * o, r.z + r.pz * o);
+    ok(Math.abs(off(r.halfW + 1) - heightAt(map, r.x + r.px * (r.halfW + 1), r.z + r.pz * (r.halfW + 1))) < 1e-6,
+       'a metre to the side it is snow again');
+
+    // The surface material: 0 is snow, 1 is steel, and it ramps rather than switching.
+    ok(Math.abs(T.slipAt(r.x, r.z) - 1) < 1e-6, 'dead centre the surface is all steel',
+       `slip ${T.slipAt(r.x, r.z).toFixed(3)}`);
+    ok(T.slipAt(r.x + r.px * (r.halfW + 1), r.z + r.pz * (r.halfW + 1)) === 0,
+       'a metre to the side it is all snow');
+    let jump = 0, prev = T.slipAt(r.x + r.px * -(r.halfW + 0.5), r.z + r.pz * -(r.halfW + 0.5));
+    for (let u = -(r.halfW + 0.5); u <= r.halfW + 0.5; u += 0.01) {
+      const v = T.slipAt(r.x + r.px * u, r.z + r.pz * u);
+      jump = Math.max(jump, Math.abs(v - prev)); prev = v;
+    }
+    ok(jump < 0.35, 'and it ramps across the edge rather than switching', `worst step ${jump.toFixed(3)} per cm`);
+    ok(T.slipAt(r.x + r.px * (r.halfW + 1), r.z + r.pz * (r.halfW + 1)) === 0
+       && T.slipAt(r.x, r.z) === 1, 'snow is 0 and the deck is 1, so snow physics is untouched');
+
+    // The deck is level ACROSS the bar -- that is what stops it tipping the board onto a camber
+    // that is not there. It is NOT level along the bar: it follows the hill, and saying otherwise
+    // makes the contact cancel the rider's descent every step and hop them off it.
+    const nOn = T.normalAt(r.x, r.z, undefined);
+    const across = nOn[0] * r.px + nOn[2] * r.pz;
+    ok(Math.abs(across) < 1e-6, 'on the deck the surface is level across the bar',
+       `normal into the cross-axis ${across.toExponential(1)}`);
+    // Taking the cross component out and renormalising scales what is left, so the raw numbers
+    // differ -- what has to survive is the ANGLE the deck tilts along the bar.
+    const snowN = normalAt(map, r.x, r.z);
+    const tilt = (n) => Math.atan2(n[0] * r.ax + n[2] * r.az, n[1]) * 180 / Math.PI;
+    ok(Math.abs(tilt(nOn) - tilt(snowN)) < 0.05, 'and tilts along its length exactly as the hill does',
+       `deck ${tilt(nOn).toFixed(2)} deg against the snow's ${tilt(snowN).toFixed(2)} deg`);
+    const nSnow = T.normalAt(r.x + r.px * (r.halfW + 1), r.z + r.pz * (r.halfW + 1), undefined)[1];
+    ok(Math.abs(nSnow - normalAt(map, r.x + r.px * (r.halfW + 1), r.z + r.pz * (r.halfW + 1))[1]) < 1e-6,
+       'beside it, the real slope', `ny ${nSnow.toFixed(4)}`);
+  }
 }
 
 console.log(fails ? `\n${fails} CHECK(S) FAILED` : '\nALL COLLIDER CHECKS PASSED');

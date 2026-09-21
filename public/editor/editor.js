@@ -108,7 +108,22 @@ live.on('welcome', (m) => {
   counts = m.counts || counts;
   // If the socket dropped while we were editing, the headset missed those patches and no
   // later message would repair it. Push the whole map once to resynchronise.
-  if (live.dropped && state.map) { live.dropped = false; live.send({ type: 'map', map: serializeMap(state.map) }); toast('Reconnected, resent the map'); }
+  if (live.dropped && state.map) {
+    live.dropped = false;
+    if (state.dirty) {
+      // Our copy is genuinely ahead of the file, so it wins and gets written.
+      live.send({ type: 'map', map: serializeMap(state.map) });
+      toast('Reconnected, resent your unsaved changes');
+    } else {
+      // Our copy is only as good as the file was when we loaded it, and this tab may have been
+      // sitting open for hours while the map moved on somewhere else. Pushing it would write that
+      // stale copy over the newer one -- which is exactly how an idle editor tab used to eat a
+      // session's work every time the server restarted. Take the server's copy first, then push
+      // THAT, so the headset still gets resynchronised without anything being overwritten.
+      openMap(state.map.id, { announce: false })
+        .then(() => { live.send({ type: 'map', map: serializeMap(state.map) }); toast('Reconnected, reloaded the map'); });
+    }
+  }
   setLive(true);
 });
 live.on('close', () => setLive(false));

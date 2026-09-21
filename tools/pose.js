@@ -27,12 +27,15 @@ export function makePose({ yaw = 0, edge = 0, pitch = 0, height = 0.85, lateral 
 export const deg = (d) => (d * Math.PI) / 180;
 
 // A flat plane falling away along +z, for isolating the model from terrain noise.
-export function planarTerrain(slopeDeg) {
+export function planarTerrain(slopeDeg, slip = 0) {
   const t = Math.tan(deg(slopeDeg)), l = Math.hypot(0, 1, t);
   return {
     heightAt: (x, z) => -t * z,
     normalAt: (x, z, o = [0, 1, 0]) => { o[0] = 0; o[1] = 1 / l; o[2] = t / l; return o; },
     slopeAt: () => slopeDeg,
+    // What the surface is made of: 0 snow, 1 the steel deck of a rail. Left at 0 by default so
+    // every test written before rails were a surface still asks the question it used to.
+    slipAt: () => slip,
   };
 }
 

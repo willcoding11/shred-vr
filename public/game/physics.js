@@ -62,6 +62,12 @@ export const DEFAULT_TUNING = {
   ploughRef: 5.0,            // m/s that ploughing drag is quoted against; it grows as v^2 from there
   ploughMax: 4.0,            // and stops growing here, so a fast board is redirected, not deleted
   maxLoadG: 2.2,             // cap on how much a carve may load the board (expert carves peak near 2g)
+  // Steel under a waxed base. It is not snow: there is almost nothing for an edge to bite into,
+  // which is why a grind runs straight whatever you do with your feet, and it scrubs far less
+  // speed than the slope does. These scale between snow and rail on the surface blend, so snow
+  // behaviour is untouched at slip 0.
+  railMu: 0.010,             // base friction on the deck, against 0.034 for groomed snow
+  railGrip: 0.90,            // how much of the edge's bite the steel takes away
   maxLatG: 2.6,                // and a hard ceiling on the lateral acceleration itself
   railHoldDeg: 6,            // slip angle up to which the board is still running in its own groove
   railGoneDeg: 24,           // and past which there is no groove left to follow
@@ -78,6 +84,15 @@ export const DEFAULT_TUNING = {
   bridge: 0.035,             // m, how much snow and board stiffness smooth out a sharp ridge
   bridgeGain: 0.007,         // ...and how much more of that a board planing at speed does
   bridgeMax: 0.18,
+  climbGrade: 1.5,           // the steepest surface a contact may carry you up, as a gradient --
+                             // about 56 degrees. A rail's end ramp rises 1.05 m per metre, so you
+                             // ride onto it; its side rises 90 m per metre, so you do not ride up
+                             // that. How fast that allows you to rise scales with how fast you are
+                             // travelling, because that is what carries you up a slope -- a fixed
+                             // rate was either too slow to mount a ramp at speed or fast enough to
+                             // launch you off a wall, and as a per-STEP distance it also ran three
+                             // times quicker at 240 Hz than at 72.
+  climbFloor: 0.5,           // m/s, so a contact can still settle you when you are barely moving.
   bodyMin: 0.50,             // m, how close your head may get to the snow before your legs stop you.
                              // This has to be well under 0.75: the board sits at hand height, so
                              // riding normally already puts your head only ~0.75 m above the snow.
@@ -90,6 +105,7 @@ const _a = new THREE.Vector3(), _c = new THREE.Vector3();
 const _vb = new THREE.Vector3(), _vc = new THREE.Vector3(), _tan = new THREE.Vector3();
 const _side = new THREE.Vector3(), _head = new THREE.Vector3();
 const _nrm = [0, 1, 0];
+const _gaps = new Float64Array(9);
 const clamp = THREE.MathUtils.clamp, smooth = THREE.MathUtils.smoothstep;
 const DEG = THREE.MathUtils.degToRad, RAD = THREE.MathUtils.radToDeg;
 
@@ -184,7 +200,7 @@ export class Rider {
     }
 
     this.pos.addScaledVector(v, dt);
-    this.resolveContact(pose, wasGrounded, vb);
+    this.resolveContact(pose, wasGrounded, vb, dt);
     this.constrainBody(dt, head, pose);
     this.speed = v.length();
   }
@@ -250,7 +266,12 @@ export class Rider {
 
     // Available edge grip. tan(psi) is the classic edge relation; the flat term is there
     // because a base is never truly clear of the snow.
-    const muLat = Math.min(t.muLatFlat + Math.tan(Math.min(mag, 1.3)) * engage * this.snow.grip * bias, t.muLatMax);
+    // On a rail there is next to nothing for the edge to hold, so the bite fades out with the
+    // surface blend rather than switching off at a boundary.
+    const slip = T.slipAt ? T.slipAt(c.x, c.z) : 0;
+    this.slipSurface = slip;
+    const muLat = Math.min(t.muLatFlat + Math.tan(Math.min(mag, 1.3)) * engage * this.snow.grip * bias
+                           * (1 - slip * t.railGrip), t.muLatMax);
 
     const Fmax = muLat * loadA;                                       // as an acceleration
 
@@ -296,7 +317,7 @@ export class Rider {
     // almost nothing: that let a flat base sideslip at 70 km/h and made pointing FURTHER across
     // the hill go FASTER than pointing down it.
     const dig = Math.max(0, Math.abs(pitch) - t.digThresholdRad) * t.noseDigScrub;
-    const mu = this.snow.mu + dig * 0.20;
+    const mu = (this.snow.mu + dig * 0.20) * (1 - slip) + t.railMu * slip;
     v.addScaledVector(r, aLat * dt);                                  // the edge force itself
     if (vT > 1e-3) {
       const ux = vf / vT, uz = vr / vT;                               // unit travel, in board axes
@@ -322,7 +343,10 @@ export class Rider {
       // near level, and level across a slope is only a small edge. Furrow depth goes with the
       // sine of the edge angle, so that is what this scales with, reaching full bite at 45 deg.
       const bite = 0.16 + 0.84 * Math.min(1, Math.sin(mag) / 0.7071);
-      const aPlough = t.muSkidExtra * loadA * sb * sb * ramp * bite;
+      // Ploughing is the board pushing snow aside. There is no snow on a rail to push, which is
+      // why a boardslide used to die on the bar -- entered at 32 km/h, left at 5. Same blend the
+      // other two friction terms use, so it is a no-op the moment you are back on snow.
+      const aPlough = t.muSkidExtra * loadA * sb * sb * ramp * bite * (1 - slip * t.railGrip);
 
       // The edge force acts ACROSS the board, and the board is at a slip angle, so that force has
       // a component along your direction of travel. A blade cutting snow can only ever take
@@ -385,15 +409,15 @@ export class Rider {
     _side.crossVectors(this.boardUp, this.boardNose).normalize();
     let gap = Infinity, gx = this.boardPos.x, gz = this.boardPos.z;
     let noseGap = Infinity, tailGap = Infinity;
-    let soft = 0;                                    // running sum for the soft minimum below
+    let k = 0;
     for (const along of [half, 0, -half]) {
       for (const across of [-halfW, 0, halfW]) {
         const px = this.boardPos.x + this.boardNose.x * along + _side.x * across;
         const py = this.boardPos.y + this.boardNose.y * along + _side.y * across;
         const pz = this.boardPos.z + this.boardNose.z * along + _side.z * across;
         const gp = py - T.heightAt(px, pz);
+        _gaps[k++] = gp;
         if (gp < gap) { gap = gp; gx = px; gz = pz; }
-        soft += Math.exp(-gp / bridge);
         if (along > 0 && gp < noseGap) noseGap = gp;
         if (along < 0 && gp < tailGap) tailGap = gp;
       }
@@ -404,12 +428,29 @@ export class Rider {
     // head. A real board is stiff and bridges small irregularities, and snow compresses under the
     // point that is bearing. This rounds the corner over roughly 3.5 cm and does nothing else:
     // on smooth ground every sample agrees and it returns the same answer as the hard minimum.
-    return { gap: -bridge * Math.log(soft / 9), x: gx, z: gz, noseGap, tailGap };
+    //
+    // It is a WEIGHTED MEAN of the samples rather than log(sum / 9), because dividing by a fixed
+    // nine assumes all nine are over comparable ground. They are not when the board lies ACROSS
+    // something narrow: ride a rail perpendicular, the way you actually ride one, and only three
+    // samples are on it while six hang over snow a metre below. The old form then reported the
+    // board floating bridge*ln(9/3) -- up to 19 cm at speed -- above a deck it was resting on, and
+    // since penetration is all that gets resolved, the board sank by that much and at speed
+    // tipped over contactEps into reading as airborne. Weighting costs distant samples their vote
+    // instead of counting them, so the answer no longer depends on how many happen to be in
+    // contact. On uniform ground every weight is equal and it returns exactly what it used to.
+    let wsum = 0, gsum = 0;
+    for (let i = 0; i < 9; i++) {
+      // Offset by the hard minimum before exponentiating, or a board high in the air underflows
+      // every weight to zero and this divides nothing by nothing.
+      const w = Math.exp(-(_gaps[i] - gap) / bridge);
+      wsum += w; gsum += _gaps[i] * w;
+    }
+    return { gap: gsum / wsum, x: gx, z: gz, noseGap, tailGap };
   }
 
   // The board may not go under the snow. Satisfying that is the whole of jumping: drive the
   // board down with your feet, the snow will not move, so you go up instead.
-  resolveContact(pose, wasGrounded, vb) {
+  resolveContact(pose, wasGrounded, vb, dt = 1 / 240) {
     const t = this.t, T = this.terrain, v = this.vel;
     this.applyPose(pose);
     const c = this.sampleContact();
@@ -419,7 +460,19 @@ export class Rider {
     // Resolve PENETRATION only. Snapping the board back down onto the snow when it is already
     // clear of it would cancel every ollie the moment it started -- the rider would rise, get
     // pulled straight back to the surface, and never leave the ground.
-    if (c.gap < 0) { this.pos.y -= c.gap; this.boardPos.y -= c.gap; }
+    if (c.gap < 0) {
+      // Penetration you made by FALLING is resolved outright -- that is a landing, and it is the
+      // whole of this model. Penetration that appeared because you slid sideways into something is
+      // not: the side of a rail is a metre and a half of wall, and lifting you clear of it in one
+      // step launches you two metres into the air. Allow only as much as this step could actually
+      // have buried you, so a wall becomes something you ride up over a few frames instead. On
+      // snow the penetration never exceeds how far you fell, so this changes nothing there.
+      const fell = Math.max(0, -Math.min(0, v.y));
+      const carried = Math.hypot(v.x, v.z) * t.climbGrade + t.climbFloor;
+      const couldHaveFallen = (fell + carried) * dt;
+      const fix = Math.min(-c.gap, couldHaveFallen);
+      this.pos.y += fix; this.boardPos.y += fix;
+    }
     const nArr = T.normalAt(c.x, c.z);
     const n = _c.set(nArr[0], nArr[1], nArr[2]).normalize();
 
@@ -456,11 +509,18 @@ export class Rider {
     this.standing = false;
     if (!head) return;
     _head.copy(this.pos).add(head);
-    const floor = this.terrain.heightAt(_head.x, _head.z) + this.t.bodyMin;
+    // What counts as the floor under your HEAD is the snow, plus whatever your board is standing
+    // on. Not a rail your head merely happens to be passing over: the bar is 28 cm wide and stands
+    // a metre and a half up, so as the head crossed on and off that strip this floor jumped by the
+    // whole height of it and shoved the rider a metre into the air, over and over. Your legs stop
+    // your head reaching the ground; a handrail at chest height is not the ground.
+    const T = this.terrain;
+    const gAt = T.ground ? T.ground() : null;
+    const floor = (gAt ? gAt(_head.x, _head.z) : T.heightAt(_head.x, _head.z)) + this.t.bodyMin;
     if (_head.y >= floor) return;
 
     this.pos.y += floor - _head.y;
-    const nArr = this.terrain.normalAt(_head.x, _head.z);
+    const nArr = T.normalAt(_head.x, _head.z);
     const n = _c.set(nArr[0], nArr[1], nArr[2]).normalize();
     const v = this.vel;
     const vn = v.dot(n);

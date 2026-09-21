@@ -14,7 +14,7 @@ import { buildColliders, radiusAt, clears, bonk } from '../shared/collide.js';
 import { Rider, SNOW } from './physics.js';
 import { BoardControls } from './controls.js';
 import { Hud, VrMenu, Vignette, fmtTime } from './hud.js';
-import { GameAudio, RAIL_DEFAULTS } from './audio.js';
+import { GameAudio } from './audio.js';
 
 const DEFAULTS = {
   regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1, quality: 'fast', detail: 1,
@@ -305,64 +305,6 @@ live.on('env', (msg) => {
   scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
   terrain.recolor(); flashLive();
-});
-
-// ---------------- grind mixer ----------------
-// Dialling a procedural sound in from source edits is hopeless: you change a number, reload, ride
-// to a rail, and by the time you hear it you have forgotten what the last one sounded like. This
-// plays the grind on a loop and puts every parameter under a slider.
-const MIX = [
-  ['hissFreq', 'Hiss pitch', 600, 7000, 25, 'Hz', 'the base scraping over the metal'],
-  ['hissQ', 'Hiss focus', 0.5, 20, 0.1, '', 'low is a wash, high is a whistle'],
-  ['hissGain', 'Hiss level', 0, 0.6, 0.005, '', ''],
-  ['ringFreq', 'Ring pitch', 120, 2500, 10, 'Hz', 'the bar itself'],
-  ['ringQ', 'Ring focus', 0.5, 30, 0.1, '', 'high is a clear note, low is a thud'],
-  ['ringGain', 'Ring level', 0, 0.6, 0.005, '', ''],
-  ['lfoRate', 'Wobble speed', 0, 40, 0.1, 'Hz', 'a rail is never smooth under you'],
-  ['lfoDepth', 'Wobble depth', 0, 500, 5, 'Hz', ''],
-  ['clackFreq', 'Clack pitch', 60, 600, 5, 'Hz', 'on and off the steel'],
-  ['speedRef', 'Full at', 2, 25, 0.5, 'm/s', 'how fast for the full sound'],
-];
-function buildMixer() {
-  const grid = $('mixGrid');
-  for (const [key, label, min, max, step, unit, hint] of MIX) {
-    const l = document.createElement('label');
-    l.innerHTML = `<span>${label}${hint ? ` &mdash; <em style="opacity:.7">${hint}</em>` : ''}</span>`
-      + `<output></output><input type="range" min="${min}" max="${max}" step="${step}">`;
-    const input = l.querySelector('input'), out = l.querySelector('output');
-    const show = () => { out.textContent = audio.rail[key] + (unit ? ' ' + unit : ''); };
-    input.value = audio.rail[key]; show();
-    input.addEventListener('input', () => {
-      audio.setRail({ [key]: Number(input.value) });
-      show(); dumpMixer();
-    });
-    l.dataset.key = key;
-    grid.appendChild(l);
-  }
-  dumpMixer();
-}
-function dumpMixer() {
-  $('mixOut').textContent = JSON.stringify(audio.rail, null, 0).replace(/,/g, ', ');
-}
-function showMixer(on) {
-  $('mixer').hidden = !on;
-  if (on && !$('mixGrid').children.length) buildMixer();
-  audio.previewRail(on && $('mixPlay').checked);
-}
-$('btnMixer').addEventListener('click', () => { $('settings').classList.remove('open'); showMixer(true); });
-$('mixClose').addEventListener('click', () => showMixer(false));
-$('mixPlay').addEventListener('change', (e) => audio.previewRail(e.target.checked));
-$('mixReset').addEventListener('click', () => {
-  audio.setRail({ ...RAIL_DEFAULTS });
-  for (const l of $('mixGrid').children) {
-    const k = l.dataset.key;
-    l.querySelector('input').value = audio.rail[k];
-    l.querySelector('input').dispatchEvent(new Event('input'));
-  }
-});
-$('mixCopy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('mixOut').textContent); setStatus('Grind settings copied'); }
-  catch { setStatus('Could not copy - select the text under the sliders instead'); }
 });
 
 // ---------------- page UI ----------------
@@ -693,8 +635,9 @@ function stepVR(dtReal, now) {
   vignette.update(dt, Math.min(1, settings.vignette * THREE.MathUtils.clamp(Math.abs(rider.lateralG) / 2.6, 0, 1) + flash * 0.9));
 
   // Are we on a box? The terrain already knows, because a rail IS its surface there.
-  const railNow = rider.grounded && terrain.hasRails()
-    && terrain.railAt(rider.boardPos.x, rider.boardPos.z) > heightAt(map, rider.boardPos.x, rider.boardPos.z) ? 1 : 0;
+  // The terrain already knows what you are standing on, so ask it rather than working it out here.
+  const railNow = rider.grounded
+    && terrain.slipAt(rider.boardPos.x, rider.boardPos.z) > 0.5 ? 1 : 0;
   if (railNow !== onRail) { if (railNow) audio.railOn(); else audio.railOff(); onRail = railNow; }
   audio.update(dtReal, { speed: rider.speed * slowMo, carving: rider.carving, skidding: rider.skidding, grounded: rider.grounded, tuck: tuckAmount(), onRail });
   const st = hudState();

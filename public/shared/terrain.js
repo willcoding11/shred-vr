@@ -1,7 +1,9 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
 import { gridToWorld, slopeDegAt, heightAt, normalAt, PROP_TYPES } from './mapformat.js';
-import { buildRails, railHeightAt, railLift } from './collide.js';
+import { buildRails, railHeightAt, railLift, railSlipAt, railUnder } from './collide.js';
+
+
 import { snowNormalMap, patchSnowMaterial } from './realism.js';
 
 const _c = new THREE.Color();
@@ -148,13 +150,25 @@ export class Terrain {
   // model applies to it unchanged: the edges grip, the board balances, and riding off the side is
   // a drop rather than a scripted dismount. Nothing in physics.js knows rails exist.
   //
-  // This works because the board's contact is a soft MINIMUM of nine samples, which resolves to
-  // whichever ground is highest. It is also why these are boxes 46 cm wide rather than round bars:
-  // the soft minimum lifts the board by bridge*ln(9/n) when only n of the nine samples are on the
-  // narrow thing, which at speed is 40 cm of float above a rail you are supposed to be standing on.
+  // This works because the board's contact resolves to whichever ground is highest, over nine
+  // samples. It is also why these are boxes rather than round bars -- the modelled ones measure
+  // about 32 cm across, and the contact is a weighted soft minimum precisely so that a board lying
+  // ACROSS one, with only three of its nine samples on the deck, is still held up by it.
   // At 46 cm the whole board is carried and there is no float at all.
   setRails() { this.rails = buildRails(this.map); }
-  railAt(wx, wz) { return this.rails && this.rails.length ? railHeightAt(this.rails, wx, wz) : -Infinity; }
+  // The bar's own height comes from the ground along its centreline, so the deck follows the hill
+  // without tilting across its width. Made on first use rather than in the constructor: the test
+  // harnesses build a Terrain with Object.create to get heightAt without a WebGL context, and a
+  // class field would be missing on those -- they would silently take the old path and pass.
+  ground() {
+    if (!this._gAt) this._gAt = (x, z) => heightAt(this.map, x, z);
+    return this._gAt;
+  }
+
+  railAt(wx, wz) {
+    if (!this.rails || !this.rails.length) return -Infinity;
+    return railHeightAt(this.rails, wx, wz, this.ground());
+  }
 
   hasRails() { return !!(this.rails && this.rails.length); }
 
@@ -479,22 +493,46 @@ export class Terrain {
 
   recolor() { const { w, h } = this.map.size; this.updateRegion({ x0: 0, z0: 0, x1: w - 1, z1: h - 1 }); }
 
+  // A rail is ground that happens to be raised and slippery. Nothing here knows or cares where
+  // the rider is: treating it as a special case rather than as terrain produced two opposite bugs,
+  // one standing you on a box you were passing under and one letting you ride straight through
+  // every rail on the map.
   heightAt(x, z) {
     const g = heightAt(this.map, x, z);
     if (!this.rails || !this.rails.length) return g;
     const r = this.railAt(x, z);
     return r > g ? r : g;
   }
+
+  // What the surface here is made of: 0 is snow, 1 is the steel deck, and it ramps between the two
+  // over the rail's tapered edge so nothing changes discontinuously under the board.
+  slipAt(x, z) {
+    if (!this.rails || !this.rails.length) return 0;
+    return railSlipAt(this.rails, x, z);
+  }
   normalAt(x, z, out) {
     const n = normalAt(this.map, x, z, out);
     if (!this.rails || !this.rails.length) return n;
-    // A box top is flat, so on one the snow's normal underneath is the wrong answer -- it would
-    // tip the board to a slope that is not there. But SWITCHING to flat the instant a sample
-    // crosses onto the rail snaps the board between two orientations, which is half the jitter.
-    // Blend over the first 25 cm of lift instead.
-    const k = railLift(this.rails, x, z, heightAt(this.map, x, z));
+    // A bar is level ACROSS its width, so the snow's normal underneath would tip the board onto a
+    // camber that is not there. But it is NOT level along its length -- the deck follows the hill.
+    // Blending all the way to straight up declares a flat surface under a rider who is genuinely
+    // descending, and the contact constraint then cancels their v*sin(slope) every single step and
+    // hops them off it: 17 cm on a 6 degree rail, 161 cm on a 30 degree one, nothing at all on the
+    // flat. So level it across the bar only, by taking out the component along the bar's own
+    // cross-axis and leaving the along-bar tilt alone.
+    // Blending rather than switching, over the first 25 cm of lift: flipping the normal the
+    // instant a sample crosses on snaps the board between two orientations, which is half the jitter.
+    const k = railLift(this.rails, x, z, heightAt(this.map, x, z), this.ground());
     if (k <= 0) return n;
-    const nx = n[0] * (1 - k), ny = n[1] * (1 - k) + k, nz = n[2] * (1 - k);
+    const r = railUnder(this.rails, x, z, this.ground());
+    let ux = 0, uy = 1, uz = 0;
+    if (r) {
+      const d = n[0] * r.px + n[2] * r.pz;
+      ux = n[0] - d * r.px; uy = n[1]; uz = n[2] - d * r.pz;
+      const ul = Math.hypot(ux, uy, uz) || 1;
+      ux /= ul; uy /= ul; uz /= ul;
+    }
+    const nx = n[0] * (1 - k) + ux * k, ny = n[1] * (1 - k) + uy * k, nz = n[2] * (1 - k) + uz * k;
     const len = Math.hypot(nx, ny, nz) || 1;
     n[0] = nx / len; n[1] = ny / len; n[2] = nz / len;
     return n;

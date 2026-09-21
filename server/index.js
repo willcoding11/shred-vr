@@ -46,8 +46,27 @@ function readMap(id) {
   if (!ID_RE.test(id) || !fs.existsSync(mapPath(id))) return null;
   return JSON.parse(fs.readFileSync(mapPath(id), 'utf8'));
 }
+// Keep the last few versions of every map. Editing is the only thing here that represents hours
+// of somebody's work, and it is the one thing with no undo once a bad write has landed -- a stale
+// editor tab resyncing over a newer file cost a session's edits before this existed.
+const HISTORY_DIR = path.join(MAPS_DIR, '.history');
+const HISTORY_KEEP = 20;
+function snapshot(id) {
+  try {
+    if (!fs.existsSync(mapPath(id))) return;
+    fs.mkdirSync(HISTORY_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    fs.copyFileSync(mapPath(id), path.join(HISTORY_DIR, `${id}--${stamp}.json`));
+    const mine = fs.readdirSync(HISTORY_DIR).filter((f) => f.startsWith(`${id}--`)).sort();
+    for (const f of mine.slice(0, Math.max(0, mine.length - HISTORY_KEEP))) {
+      fs.unlinkSync(path.join(HISTORY_DIR, f));
+    }
+  } catch (e) { console.warn('map snapshot failed', e.message); }
+}
+
 function writeMap(map) {
   if (!ID_RE.test(map.id)) throw new Error('bad id');
+  snapshot(map.id);
   const tmp = mapPath(map.id) + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(map));
   fs.renameSync(tmp, mapPath(map.id));

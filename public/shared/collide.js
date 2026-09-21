@@ -119,23 +119,78 @@ const sm = (t) => { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t);
 // cliff one at a time and the contact height jumps with each one. That is the jitter. The edges now
 // fall to the surrounding snow over the outer quarter of the width, so the surface is continuous
 // everywhere and the samples have something smooth to average.
-export function railHeightAt(rails, wx, wz) {
+//
+// And that is ALL a rail is: a raised piece of ground. No altitude test, no special case for
+// passing beneath one. Two bugs came out of trying to be cleverer than that, in opposite
+// directions -- first standing you on a box you were passing under, then letting you ride through
+// every rail on the map.
+// Which rail is the surface here, if any. The normal needs to know WHICH bar it is standing on,
+// because a bar is level across its own width and that width has a direction.
+export function railUnder(rails, wx, wz, groundAt) {
+  let best = -Infinity, hit = null;
+  for (const r of rails) {
+    const y = railOne(r, wx, wz, groundAt);
+    if (y > best) { best = y; hit = r; }
+  }
+  return hit;
+}
+
+export function railHeightAt(rails, wx, wz, groundAt) {
   let best = -Infinity;
+  for (const r of rails) {
+    const y = railOne(r, wx, wz, groundAt);
+    if (y > best) best = y;
+  }
+  return best;
+}
+
+function railOne(r, wx, wz, groundAt) {
+  const dx = wx - r.x, dz = wz - r.z;
+  const t = dx * r.ax + dz * r.az;
+  if (t < -r.halfL || t > r.halfL) return -Infinity;
+  const u = dx * r.px + dz * r.pz;
+  if (u < -r.halfW || u > r.halfW) return -Infinity;
+  const ends = Math.min(1, (r.halfL - Math.abs(t)) / r.ramp);   // ramped at both ends
+  // Only a 12% roll-off each side. A tall narrow rail has vertical sides whatever you do -- you
+  // cannot taper 1.5 m of drop across 5 cm and call it gentle -- so the taper is not there to
+  // soften the sides, it is there to make the function continuous. What actually decides whether
+  // the board sits still is how much FLAT TOP is left for its contact samples, and every
+  // centimetre spent tapering is a centimetre taken off that.
+  const edge = sm((r.halfW - Math.abs(u)) / (r.halfW * 0.12));
+  // The surface rides the GROUND, not a fixed altitude. A rail used to be a horizontal plank at
+  // anchorGround + height, which is only right where the snow is level: on a slope the deck buries
+  // itself uphill and floats metres in the air downhill, and its footprint edge becomes a cliff in
+  // the height function. Cross underneath one of those and the contact reports a metre of
+  // penetration, so the rider is ejected to the top of it -- fall through, pop up, fall through.
+  // Following the ground instead makes the rail a ribbon a fixed height above the snow: continuous
+  // with the terrain everywhere, and there is no "underneath" left to be caught in.
+  //
+  // It follows the ground along its LENGTH only. The height is taken on the bar's centreline, so
+  // the deck stays level ACROSS its width the way a rigid bar is -- sampling under each point
+  // instead tilts the top with the hill and costs most of the flat that the board needs.
+  const cx = r.x + r.ax * t, cz = r.z + r.az * t;
+  const base = groundAt ? groundAt(cx, cz) : r.top - r.h;
+  const k = ends * edge;                    // 0 at the edge of the footprint, 1 along the middle
+  return base + r.h * k;
+}
+
+// What the surface is made of here: 0 snow, 1 steel. Not derived from the height, because the
+// height climbs 1.25 m across a 2 cm taper -- anything based on it is a step, and the contact point
+// dithering either side of that step would chatter the grip between snow and steel. This ramps
+// across the last few centimetres of the deck instead, so crossing onto a rail changes what you
+// are riding on over about a board's-edge of travel rather than instantly.
+const SLIP_RAMP = 0.06;      // m
+export function railSlipAt(rails, wx, wz) {
+  let best = 0;
   for (const r of rails) {
     const dx = wx - r.x, dz = wz - r.z;
     const t = dx * r.ax + dz * r.az;
     if (t < -r.halfL || t > r.halfL) continue;
     const u = dx * r.px + dz * r.pz;
     if (u < -r.halfW || u > r.halfW) continue;
-    const ends = Math.min(1, (r.halfL - Math.abs(t)) / r.ramp);   // ramped at both ends
-    // Only a 12% roll-off each side. A tall narrow rail has vertical sides whatever you do -- you
-    // cannot taper 1.5 m of drop across 5 cm and call it gentle -- so the taper is not there to
-    // soften the sides, it is there to make the function continuous. What actually decides whether
-    // the board sits still is how much FLAT TOP is left for its contact samples, and every
-    // centimetre spent tapering is a centimetre taken off that.
-    const edge = sm((r.halfW - Math.abs(u)) / (r.halfW * 0.12));
-    const y = r.top - r.h * (1 - ends * edge);
-    if (y > best) best = y;
+    const inset = Math.min(r.halfW - Math.abs(u), r.halfL - Math.abs(t));
+    const k = sm(inset / SLIP_RAMP);
+    if (k > best) best = k;
   }
   return best;
 }
@@ -143,8 +198,8 @@ export function railHeightAt(rails, wx, wz) {
 // How far above the surrounding snow the rail surface is here, 0 to 1 over the first 25 cm. The
 // normal blends on this rather than switching: a box top is flat, but flipping the normal the
 // instant a sample crosses onto the rail makes the board snap between two orientations.
-export function railLift(rails, wx, wz, groundY) {
-  const y = railHeightAt(rails, wx, wz);
+export function railLift(rails, wx, wz, groundY, groundAt) {
+  const y = railHeightAt(rails, wx, wz, groundAt);
   if (!(y > groundY)) return 0;
   return Math.min(1, (y - groundY) / 0.25);
 }

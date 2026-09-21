@@ -83,6 +83,7 @@ const spray = makeSpray(); scene.add(spray.points);
 let map = null, terrain = null, props = null, startGate = null, finishBanner = null, finishWidth = -1;
 let rider = null;
 let walker = null;
+let walkFrames = 0;   // how many frames the walker has owned the rig; a diagnostic, see shredRefs
 let spatial = new Map();
 let lifts = null, liftRide = null, liftDwell = 0;
 let phase = 'idle';                 // idle (not in VR) | riding | finished
@@ -574,6 +575,7 @@ renderer.setAnimationLoop(() => {
   if (!map) { renderer.render(scene, camera); return; }
 
   if (inXR) stepVR(dt, now);
+  else if (phase === 'walking') stepWalkDesktop(dt);
   else stepPreview(dt);
 
   spray.update(dt);
@@ -586,6 +588,13 @@ renderer.setAnimationLoop(() => {
   // somewhere the light is not
   const su = terrain?.material?.userData?.realUniforms;
   if (su && scenery.sunDir) su.uSunDir.value.copy(scenery.sunDir);
+  // ON FOOT, THE WALKER OWNS THE RIG, AND IT SAYS SO LAST.
+  // Three different things write rig.position in a frame -- the board rider, the chairlift, and
+  // the desktop preview camera -- and walking lost to all of them when it wrote in the middle:
+  // every stroke moved the rig and something downstream put it straight back. Writing here, after
+  // everything else and before the render, means the order cannot be got wrong again.
+  if (phase === 'walking' && walker) { rig.position.copy(walker.pos); rig.rotation.set(0, 0, 0); walkFrames++; }
+
   camera.getWorldPosition(tmpV);
   tickFps(dt);
   lastViewer = inXR && rider ? rider.boardPos : tmpV;
@@ -648,7 +657,6 @@ function stepVR(dtReal, now) {
   // to drive separately, which is the same reason the board model never rotates the world.
   if (phase === 'walking') {
     walker.step(Math.min(0.05, dtReal), controls.hands);
-    rig.position.copy(walker.pos);
     boardGroup.visible = false;
     tryClipIn(dtReal);
   }
@@ -702,7 +710,11 @@ function stepVR(dtReal, now) {
   // the rig IS the rider; the board is drawn where the hands are
   // The rig NEVER rotates. Your heading is your body's heading, in the room, and a turn is
   // something you make by physically swinging the board round. Nothing spins the world for you.
-  if (phase !== 'lift') { rig.position.copy(rider.pos); rig.rotation.set(0, 0, 0); }
+  //
+  // On foot the WALKER is the rider, and it has already put the rig where it belongs. Copying the
+  // board rider's position over it here -- every frame, unconditionally -- is why walking did
+  // nothing at all: each stroke moved the rig and this snapped it straight back.
+  if (phase !== 'lift' && phase !== 'walking') { rig.position.copy(rider.pos); rig.rotation.set(0, 0, 0); }
 
   // Legs. The heightfield is bilinear on a 2 m grid, so it has a crease at every grid line, and
   // a rigid rider delivers one of those straight into the player's head several times a second.
@@ -726,8 +738,8 @@ function stepVR(dtReal, now) {
   const travel = 0.09 + Math.min(0.10, rider.speed * 0.005);
   const sag = THREE.MathUtils.clamp(rider.pos.y - legY, -travel, travel);
   legY = rider.pos.y - sag;
-  if (phase !== 'lift') rig.position.y = rider.pos.y - sag;
-  bootSag = phase === 'lift' ? 0 : sag;
+  if (phase !== 'lift' && phase !== 'walking') rig.position.y = rider.pos.y - sag;
+  bootSag = (phase === 'lift' || phase === 'walking') ? 0 : sag;
 
   // DRAW from the unsmoothed pose. The physics reads the smoothed one, because a 60 ms filter
   // is what keeps tracking noise out of the forces, but drawing through that same filter puts
@@ -765,6 +777,12 @@ function stepVR(dtReal, now) {
   }
 }
 
+// Desktop, on foot. There is no XR to read hands from, so nothing moves you -- but the walker
+// still runs and still owns the rig, which is what makes this testable outside a headset at all.
+function stepWalkDesktop(dt) {
+  walker.step(Math.min(0.05, dt), controls.hands);
+}
+
 // Desktop: a slow look around the map you are editing. No riding, by design.
 function stepPreview(dt) {
   if (preview.spin !== false) preview.angle += dt * 0.06;
@@ -792,7 +810,34 @@ window.shredCam = (o = {}) => { Object.assign(preview, o); if (o.at === null) pr
 // Everything a review needs to check a claim instead of squinting at a screenshot. Reviewing the
 // Real preset from pictures alone kept producing confident statements about which mesh or which
 // shadow map was in use that turned out to be wrong in both directions.
-window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings, live, map, nearby, groundAt: heightAt });
+window.shredRefs = () => ({ scene, renderer, scenery, terrain, props, lifts, settings, live, map, nearby, groundAt: heightAt,
+  rig, walker, rider, controls, looseBoard, get phase() { return phase; }, set phase(p) { phase = p; }, get walkFrames() { return walkFrames; }, get inXR() { return inXR; } });
+
+// Walking is the one mode with no way to check it from a desktop: it only runs in XR, and the bug
+// that shipped twice was invisible from outside -- the rig moved and something else moved it back.
+// This drives one stroke with fake hands and reports whether the body actually went anywhere.
+//   await shredWalkCheck()
+window.shredWalkCheck = (secs = 0.5) => {
+  const was = phase;
+  phase = 'walking';
+  walker.reset(map.start.x, map.start.z);
+  const before = walker.pos.clone();
+  const HAND = walker.t.handHeight;
+  const steps = Math.round(secs * 90);
+  const out = { planted: false, rigFollowed: false };
+  for (let i = 0; i < steps; i++) {
+    const t = i / 90;
+    // one hand in the snow, pulled backwards half a metre: the simplest possible stroke
+    const fake = [{ pos: new THREE.Vector3(0, HAND, 0.4 - t * 0.8) }, null];
+    walker.step(1 / 90, fake);
+    if (walker.planted[0]) out.planted = true;
+    rig.position.copy(walker.pos);
+  }
+  out.movedBody = +walker.pos.distanceTo(before).toFixed(3);
+  out.rigMatchesBody = rig.position.distanceTo(walker.pos) < 1e-6;
+  phase = was;
+  return out;
+};
 
 // A repeatable cost measurement, because "it looks smooth on a desktop GPU" is not a number and a
 // headset has about eleven milliseconds for two eyes. Walks a fixed set of viewpoints, lets the

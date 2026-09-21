@@ -15,6 +15,7 @@ import { Rider, SNOW } from './physics.js';
 import { BoardControls } from './controls.js';
 import { Hud, VrMenu, Vignette, fmtTime } from './hud.js';
 import { GameAudio } from './audio.js';
+import { Walker } from './walk.js';
 
 const DEFAULTS = {
   regular: true, vignette: 0.6, realism: 'real', shadows: true, snowfall: true, legRate: 13, relief: 1, quality: 'fast', detail: 1,
@@ -53,6 +54,9 @@ const xrControllers = [0, 1].map((i) => { const c = renderer.xr.getController(i)
 
 // ---------------- the board, drawn exactly where your feet put it ----------------
 const boardGroup = new THREE.Group(); rig.add(boardGroup);
+// Out of the bindings the board is an object lying in the snow rather than something under your
+// feet, so it hangs off the scene instead of the rig.
+const looseBoard = new THREE.Group(); looseBoard.visible = false; scene.add(looseBoard);
 buildBoard(boardGroup, settings.boardLength);
 const bootMarks = [0, 1].map(() => {
   const m = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.009, 8, 20),
@@ -64,6 +68,7 @@ const spray = makeSpray(); scene.add(spray.points);
 // ---------------- state ----------------
 let map = null, terrain = null, props = null, startGate = null, finishBanner = null, finishWidth = -1;
 let rider = null;
+let walker = null;
 let spatial = new Map();
 let lifts = null, liftRide = null, liftDwell = 0;
 let phase = 'idle';                 // idle (not in VR) | riding | finished
@@ -118,6 +123,9 @@ function applyMap(m, keepPosition = false) {
   terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
   scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
   if (!rider) rider = new Rider(terrain, { boardLength: settings.boardLength });
+  if (!walker) walker = new Walker(terrain);
+  // buildBoard draws into whatever group it is given, so the loose board is the same board.
+  if (!looseBoard.children.length) buildBoard(looseBoard, settings.boardLength);
   rider.terrain = terrain;
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
   applyRealism();
@@ -224,6 +232,18 @@ function unloadLift() {
 }
 
 // ---------------- run control ----------------
+// An open mountain is somewhere you arrive, not a run you are dropped into. So on a freeride map
+// you start OUT of the bindings with the board lying beside you, and getting on it is something you
+// do with your hands. A level has a start gate and a clock and a finish: you start strapped in.
+function startsOnFoot() { return !!(map && map.freeride); }
+
+function parkBoard(x, z, yaw) {
+  const y = terrain.heightAt(x, z);
+  looseBoard.position.set(x, y + 0.04, z);
+  looseBoard.rotation.set(0, yaw + Math.PI / 2, 0);     // lying across your path, easy to step onto
+  looseBoard.visible = true;
+}
+
 function resetRun(toCheckpoint = false) {
   if (!map || !rider) return;
   const cp = toCheckpoint && checkpoint ? checkpoint : { x: map.start.x, z: map.start.z, yaw: map.start.yaw || 0 };
@@ -231,8 +251,44 @@ function resetRun(toCheckpoint = false) {
   legY = null;
   prevX = cp.x; prevZ = cp.z;
   if (!toCheckpoint) { runTime = 0; timerOn = false; checkpoint = null; }
-  phase = inXR ? 'riding' : 'idle';
-  if (inXR) hud.message(toCheckpoint ? 'Back on your feet' : map.name, 'Point the nose downhill, or shove a dug-in edge to scoot off the mark', 4);
+  clipHold = 0;
+  if (startsOnFoot()) {
+    // Beside you, not under you: an arm's reach to the side so it is obviously a thing to pick up.
+    walker.reset(cp.x, cp.z);
+    parkBoard(cp.x + 0.9, cp.z, cp.yaw);
+    phase = inXR ? 'walking' : 'idle';
+    if (inXR) hud.message(map.name, 'Hands in the snow to move. Put both hands on the board to clip in', 6);
+  } else {
+    looseBoard.visible = false;
+    phase = inXR ? 'riding' : 'idle';
+    if (inXR) hud.message(toCheckpoint ? 'Back on your feet' : map.name, 'Point the nose downhill, or shove a dug-in edge to scoot off the mark', 4);
+  }
+}
+
+// Strapping in. Both hands on the board, held for a moment -- a physical act, like everything else
+// in here, rather than a button. The moment takes the wobble out of a hand passing over it.
+const CLIP_RADIUS = 0.42, CLIP_TIME = 0.45;
+let clipHold = 0;
+function tryClipIn(dt) {
+  const h0 = controls.hands[0], h1 = controls.hands[1];
+  if (!h0 || !h1) { clipHold = 0; return false; }
+  let both = true;
+  for (const h of [h0, h1]) {
+    tmpV.copy(h.pos).add(walker.pos);
+    if (tmpV.distanceTo(looseBoard.position) > CLIP_RADIUS) { both = false; break; }
+  }
+  clipHold = both ? clipHold + dt : 0;
+  if (clipHold < CLIP_TIME) return false;
+  clipHold = 0;
+  // Stand the board up under you where it was lying, and hand over to the riding model.
+  rider.reset(looseBoard.position.x, looseBoard.position.z, map.start.yaw || 0, controls.pose);
+  rider.vel.set(walker.vel.x * 0.5, 0, walker.vel.z * 0.5);   // you keep some of what you had
+  looseBoard.visible = false;
+  legY = null;
+  phase = 'riding';
+  audio.gate();
+  hud.message('Strapped in', 'Shove a dug-in edge to set off', 3);
+  return true;
 }
 
 function finished() {
@@ -554,6 +610,15 @@ function stepVR(dtReal, now) {
 
   if (phase === 'lift') { stepLift(dtReal); }
 
+  // On foot. The rig IS the body here, so moving the walker moves you -- there is no camera rig
+  // to drive separately, which is the same reason the board model never rotates the world.
+  if (phase === 'walking') {
+    walker.step(Math.min(0.05, dtReal), controls.hands);
+    rig.position.copy(walker.pos);
+    boardGroup.visible = false;
+    tryClipIn(dtReal);
+  }
+
   // physics
   if (phase === 'riding' || phase === 'finished') {
     hitThisFrame = false;
@@ -622,7 +687,8 @@ function stepVR(dtReal, now) {
   // 60 ms between your hands and the board you can see. That lag is most of what reads as
   // "floaty" in a headset, and it costs nothing to remove.
   const draw = controls.rawPose.valid ? controls.rawPose : pose;
-  if (draw.valid) {
+  // Out of the bindings your hands are hands, not feet -- there is no board between them to draw.
+  if (draw.valid && phase !== 'walking') {
     boardGroup.visible = true;
     boardGroup.position.copy(draw.center);
     if (phase !== 'lift') boardGroup.position.y += sag;   // ...so the board is still on the snow

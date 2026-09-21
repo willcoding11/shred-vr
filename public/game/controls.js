@@ -69,6 +69,19 @@ export class BoardControls {
 
   get frontIndex() { return this.settings.regular ? 0 : 1; }   // regular: left hand leads
 
+  // A buzz in both hands. The only feedback in this game that does not need you to be looking at
+  // something, which is what makes it the right answer for "did that take" -- your hands are on a
+  // board at your feet and your eyes are on the hill.
+  rumble(seconds = 0.2, strength = 0.7) {
+    for (const { grip } of this.sources) {
+      const src = grip && grip.userData && grip.userData.source;
+      const pad = src && src.gamepad;
+      const act = pad && (pad.hapticActuators || [])[0];
+      // pulse() wants milliseconds and is not on every runtime, so this is allowed to do nothing.
+      try { act && act.pulse(Math.min(1, strength), Math.round(seconds * 1000)); } catch { /* no haptics */ }
+    }
+  }
+
   update(dt, camera) {
     camera.getWorldPosition(this._tmp); this.rig.worldToLocal(this._tmp); this.head.pos.copy(this._tmp);
     camera.getWorldDirection(this._tmp2);

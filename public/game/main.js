@@ -272,7 +272,7 @@ function resetRun(toCheckpoint = false) {
     walker.reset(cp.x, cp.z);
     parkBoard(cp.x + 0.9, cp.z, cp.yaw);
     phase = inXR ? 'walking' : 'idle';
-    if (inXR) hud.message(map.name, 'Hands in the snow to move. Put both hands on the board to clip in', 6);
+    if (inXR) hud.message(map.name, 'Hands in the snow to move. Both hands on the board and squeeze the grips to clip in', 7);
   } else {
     looseBoard.visible = false;
     phase = inXR ? 'riding' : 'idle';
@@ -280,13 +280,16 @@ function resetRun(toCheckpoint = false) {
   }
 }
 
-// Strapping in. Both hands on the board, held for a moment -- a physical act, like everything else
-// in here, rather than a button. The moment takes the wobble out of a hand passing over it.
-const CLIP_RADIUS = 0.42, CLIP_TIME = 0.45;
+// Strapping in: both hands ON the board and both grips SQUEEZED. Reaching for it is not the same
+// as deciding to get on it -- you brush past the board all the time while crawling around it -- so
+// the grip is what separates the two, and it is the same thing your hands do in life. The buzz is
+// the confirmation, because at that moment you are looking at your feet and not at any HUD.
+const CLIP_RADIUS = 0.42, CLIP_TIME = 0.35;
 let clipHold = 0;
 function tryClipIn(dt) {
   const h0 = controls.hands[0], h1 = controls.hands[1];
-  if (!h0 || !h1) { clipHold = 0; return false; }
+  const gripped = controls.buttons.grip[0] && controls.buttons.grip[1];
+  if (!h0 || !h1 || !gripped) { clipHold = 0; return false; }
   let both = true;
   for (const h of [h0, h1]) {
     tmpV.copy(h.pos).add(walker.pos);
@@ -295,6 +298,7 @@ function tryClipIn(dt) {
   clipHold = both ? clipHold + dt : 0;
   if (clipHold < CLIP_TIME) return false;
   clipHold = 0;
+  controls.rumble(1.0, 0.85);
   // Stand the board up under you where it was lying, and hand over to the riding model.
   rider.reset(looseBoard.position.x, looseBoard.position.z, map.start.yaw || 0, controls.pose);
   rider.vel.set(walker.vel.x * 0.5, 0, walker.vel.z * 0.5);   // you keep some of what you had
@@ -302,14 +306,14 @@ function tryClipIn(dt) {
   legY = null;
   phase = 'riding';
   audio.gate();
-  hud.message('Strapped in', 'Shove a dug-in edge to set off. Both grips held to step off again', 4);
+  hud.message('Strapped in', 'Shove a dug-in edge to set off. Hold both grips 1.5 s to step off', 4);
   return true;
 }
 
-// And back out of them. Both grips held, which is the one pair of buttons riding does not already
-// use for something -- and holding rather than tapping, so a grip you squeezed for slow motion does
-// not dump you off the board at speed.
-const UNCLIP_TIME = 0.7;
+// And back out of them. Both grips held for a good while: one grip is slow motion, so the gesture
+// has to be two hands AND long enough that nobody arrives at it by accident at 50 km/h. It buzzes
+// when it lets go, for the same reason clipping in does.
+const UNCLIP_TIME = 1.5;
 let unclipHold = 0;
 function tryStepOff(dt) {
   if (!startsOnFoot()) return false;          // a level is a run; there is nowhere to step off to
@@ -317,12 +321,13 @@ function tryStepOff(dt) {
   unclipHold = both ? unclipHold + dt : 0;
   if (unclipHold < UNCLIP_TIME) return false;
   unclipHold = 0;
+  controls.rumble(1.0, 0.85);
   const x = rider.boardPos.x, z = rider.boardPos.z;
   walker.reset(x, z);
   walker.vel.set(rider.vel.x * 0.3, 0, rider.vel.z * 0.3);
   parkBoard(x + 0.9, z, 0);
   phase = 'walking';
-  hud.message('Stepped off', 'Hands in the snow to move. Both hands on the board to get back on', 4);
+  hud.message('Stepped off', 'Hands in the snow to move. Both hands on the board, grips squeezed, to get back on', 5);
   return true;
 }
 

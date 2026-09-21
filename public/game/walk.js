@@ -20,7 +20,10 @@ export const WALK_TUNING = {
   // plants. Riding already solved this: the board sits at hand height, which puts the rig floor
   // 0.85 m BELOW the snow. Standing does the same, so your hands at their natural height are
   // already at the surface and a stroke is a stroke rather than a squat.
-  handHeight: 0.85,
+  // 1.05 rather than the board's 0.85: on foot you are down on your hands, not standing over a
+  // board at hip height, and at 0.85 the snow sat far enough below that a stroke ran out of arm
+  // before it ran out of push. Lower body, deeper reach, fuller stroke.
+  handHeight: 1.05,
   plantEps: 0.14,            // m either side of the surface that still counts as a hold
   maxPush: 7.0,              // m/s a single shove may add, so a flailed arm is not a rocket
   maxSpeed: 9.0,             // m/s overall, about a hard sprint

@@ -57,6 +57,20 @@ const boardGroup = new THREE.Group(); rig.add(boardGroup);
 // Out of the bindings the board is an object lying in the snow rather than something under your
 // feet, so it hangs off the scene instead of the rig.
 const looseBoard = new THREE.Group(); looseBoard.visible = false; scene.add(looseBoard);
+// Out of the bindings there is nothing between your hands, so without these there is nothing on
+// screen where your hands are at all -- which reads as the mode being broken rather than as you
+// having no gloves. They also have to SHOW the grip: a mitt that lights up when it takes hold is
+// the only feedback that the snow is where you think it is.
+const MITT_FREE = 0x9fb6d4, MITT_HELD = 0x7ee787;
+const mitts = [0, 1].map(() => {
+  const g = new THREE.Mesh(
+    new THREE.SphereGeometry(0.085, 12, 10),
+    new THREE.MeshStandardMaterial({ color: MITT_FREE, roughness: 0.7, emissive: 0x101820 }),
+  );
+  g.visible = false; g.castShadow = false;
+  rig.add(g);
+  return g;
+});
 buildBoard(boardGroup, settings.boardLength);
 const bootMarks = [0, 1].map(() => {
   const m = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.009, 8, 20),
@@ -287,7 +301,27 @@ function tryClipIn(dt) {
   legY = null;
   phase = 'riding';
   audio.gate();
-  hud.message('Strapped in', 'Shove a dug-in edge to set off', 3);
+  hud.message('Strapped in', 'Shove a dug-in edge to set off. Both grips held to step off again', 4);
+  return true;
+}
+
+// And back out of them. Both grips held, which is the one pair of buttons riding does not already
+// use for something -- and holding rather than tapping, so a grip you squeezed for slow motion does
+// not dump you off the board at speed.
+const UNCLIP_TIME = 0.7;
+let unclipHold = 0;
+function tryStepOff(dt) {
+  if (!startsOnFoot()) return false;          // a level is a run; there is nowhere to step off to
+  const both = controls.buttons.grip[0] && controls.buttons.grip[1];
+  unclipHold = both ? unclipHold + dt : 0;
+  if (unclipHold < UNCLIP_TIME) return false;
+  unclipHold = 0;
+  const x = rider.boardPos.x, z = rider.boardPos.z;
+  walker.reset(x, z);
+  walker.vel.set(rider.vel.x * 0.3, 0, rider.vel.z * 0.3);
+  parkBoard(x + 0.9, z, 0);
+  phase = 'walking';
+  hud.message('Stepped off', 'Hands in the snow to move. Both hands on the board to get back on', 4);
   return true;
 }
 
@@ -618,6 +652,18 @@ function stepVR(dtReal, now) {
     boardGroup.visible = false;
     tryClipIn(dtReal);
   }
+  for (let i = 0; i < 2; i++) {
+    const h = controls.hands[i];
+    const show = phase === 'walking' && !!h;
+    mitts[i].visible = show;
+    if (show) {
+      mitts[i].position.copy(h.pos);
+      mitts[i].material.color.setHex(walker.planted[i] ? MITT_HELD : MITT_FREE);
+      // A held mitt swells a little, because colour alone is hard to read at the edge of vision.
+      const k = walker.planted[i] ? 1.25 : 1;
+      mitts[i].scale.setScalar(k);
+    }
+  }
 
   // physics
   if (phase === 'riding' || phase === 'finished') {
@@ -636,6 +682,7 @@ function stepVR(dtReal, now) {
       if (phase === 'riding') { checkCollisions(); if (phase !== 'riding') break; }
     }
     if (phase === 'riding' || phase === 'finished') checkBounds();
+    if (phase === 'riding') tryStepOff(dtReal);
     if (phase === 'riding' && !map.freeride && prevZ < map.finish.z && rider.boardPos.z >= map.finish.z) finished();
     if (!map.freeride) {
       if (!timerOn && rider.speed > 1 && rider.boardPos.z > map.start.z + 4) timerOn = true;

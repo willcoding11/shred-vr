@@ -15,13 +15,15 @@ const ok = (cond, label, detail = '') => {
   console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}${detail ? '  ' + detail : ''}`);
 };
 const flat = { heightAt: () => 0, normalAt: (x, z, o = [0, 1, 0]) => o, slopeAt: () => 0 };
-// Hands come in RIG space, and the rig origin is the floor you are standing on -- which is what
-// WebXR's local-floor gives you. So a hand reaching down to the snow is near zero, and a hand held
-// up out of it is positive. Getting this upside down is why the first run of this file had a hand
-// waving in the air dragging the player 49 cm.
+// Hands come in RIG space, and the rig origin is your real floor. The snow is NOT at rig zero: it
+// sits handHeight above it, exactly as the board does when you are strapped in, so that your hands
+// at their natural height are already at the surface. Getting this wrong is not a detail -- it is
+// the difference between a stroke and having to touch the floor of your room, which is how this
+// shipped once and why it did nothing at all.
 const hand = (x, y, z) => ({ pos: new THREE.Vector3(x, y, z) });
-const DOWN = 0.0;      // knuckles in the snow
-const UP = 0.6;        // clear of it
+const DOWN = WALK_TUNING.handHeight;          // knuckles in the snow
+const UP = WALK_TUNING.handHeight + 0.65;     // clear of it
+const FLOOR = -WALK_TUNING.handHeight;        // where the rig origin sits on flat ground
 
 // Drive a walker with a scripted pair of hands. `script(t)` returns [handA, handB] in rig space.
 function run(w, script, secs, dt = 1 / 90) {
@@ -106,7 +108,7 @@ console.log('\nGRAVITY, AND LANDING ON YOUR FEET');
   const w = new Walker(flat);
   w.reset(0, 0, 4);                                  // dropped from four metres
   run(w, () => [null, null], 1.5);
-  ok(Math.abs(w.pos.y) < 0.01, 'you fall and you land', `y ${w.pos.y.toFixed(3)}`);
+  ok(Math.abs(w.pos.y - FLOOR) < 0.01, 'you fall and you land', `y ${w.pos.y.toFixed(3)}, floor ${FLOOR}`);
   ok(w.grounded, 'and you read as standing on it');
 
   // Thrown sideways, a landing takes most of it out of you rather than letting you skate away.
@@ -121,9 +123,20 @@ console.log('\nGRAVITY, AND LANDING ON YOUR FEET');
   const hill = new Walker(planarTerrain(18));
   hill.reset(0, 0, 6);
   run(hill, () => [null, null], 2.5);
-  const ground = planarTerrain(18).heightAt(hill.pos.x, hill.pos.z);
-  ok(Math.abs(hill.pos.y - ground) < 0.06, 'and on a slope you end up on the snow',
-     `${(hill.pos.y - ground).toFixed(3)} m above it`);
+  const floor = planarTerrain(18).heightAt(hill.pos.x, hill.pos.z) - WALK_TUNING.handHeight;
+  ok(Math.abs(hill.pos.y - floor) < 0.06, 'and on a slope you end up on the snow',
+     `${(hill.pos.y - floor).toFixed(3)} m off it`);
+
+  // The one that would have caught the bug the player found: with the rig sitting where it should,
+  // a hand held at ordinary height is ON the snow, not a metre over it.
+  const stand = new Walker(flat);
+  stand.reset(0, 0);
+  stand.step(1 / 90, [hand(0, DOWN, 0), null]);
+  ok(stand.planted[0], 'a hand at natural height reaches the snow without you crouching');
+  const high = new Walker(flat);
+  high.reset(0, 0);
+  high.step(1 / 90, [hand(0, DOWN + 0.5, 0), null]);
+  ok(!high.planted[0], 'and half a metre higher does not');
 }
 
 console.log(fails ? `\n${fails} WALK CHECK(S) FAILED` : '\nALL WALK CHECKS PASSED');

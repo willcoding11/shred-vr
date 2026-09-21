@@ -14,7 +14,14 @@ import * as THREE from 'three';
 
 export const WALK_TUNING = {
   gravity: 8.80,             // the same as the board's, for the same reason
-  plantEps: 0.06,            // m below the snow a hand has to reach to take hold
+  // WHERE THE SNOW IS RELATIVE TO YOU. This is the number that decides whether any of this works
+  // at all. Hands arrive in rig space, and the rig origin is your real floor -- so if the snow is
+  // at rig y 0, reaching it means physically touching the floor of your room, and nothing ever
+  // plants. Riding already solved this: the board sits at hand height, which puts the rig floor
+  // 0.85 m BELOW the snow. Standing does the same, so your hands at their natural height are
+  // already at the surface and a stroke is a stroke rather than a squat.
+  handHeight: 0.85,
+  plantEps: 0.14,            // m either side of the surface that still counts as a hold
   maxPush: 7.0,              // m/s a single shove may add, so a flailed arm is not a rocket
   maxSpeed: 9.0,             // m/s overall, about a hard sprint
   airDrag: 0.06,             // per second, so a long flight bleeds off rather than sailing
@@ -39,8 +46,12 @@ export class Walker {
     this.speed = 0;
   }
 
+  // `pos` is the rig origin, which sits handHeight below the snow. floorAt() is where it belongs
+  // for a given patch of ground.
+  floorAt(x, z) { return this.terrain.heightAt(x, z) - this.t.handHeight; }
+
   reset(x, z, y = null) {
-    this.pos.set(x, y === null ? this.terrain.heightAt(x, z) : y, z);
+    this.pos.set(x, y === null ? this.floorAt(x, z) : y, z);
     this.vel.set(0, 0, 0);
     this.planted = [false, false];
     this.grounded = false;
@@ -101,7 +112,7 @@ export class Walker {
     }
 
     // ---- the ground ---------------------------------------------------------------------------
-    const floor = this.terrain.heightAt(this.pos.x, this.pos.z);
+    const floor = this.floorAt(this.pos.x, this.pos.z);
     if (this.pos.y <= floor + t.standEps) {
       if (!this.grounded && this.vel.y < 0) {
         // Landing on your feet takes most of the sideways speed out of you, which is what stops

@@ -63,6 +63,14 @@ more detail than this list does.
 - **A clamped Lambert term has nothing to say about a backlit range.** Every face you can see on
   one is, strictly, in shade, so `max(0, N·L)` takes all of them to zero and the whole massif comes
   out as one flat silhouette. Wrapping the term keeps the gradation.
+- **A backdrop is easier to get wrong than the thing in front of it.** The far range had to be
+  rebuilt twice after it was first built. It dug a trough on its way out of the map, which from a
+  metre off the snow is fatal -- the map's own convex horizon hides the dip, so the base is
+  occluded and what survives is a ribbon hanging in the sky. Its rock rule was the near field's,
+  which is meaningless on a mesh that samples every hundred metres: a 430 m ridge across a 280 m
+  wavelength computes as a 70 degree face. And a clamped Lambert term left it darker than the
+  sunlit snow in front of it, which is the opposite of how distance works -- in a mountain
+  photograph the far peaks are the brightest thing in it.
 - **A review shot that lies is worse than no review shot.** Two hours went into hunting a terrain
   bug that was in the harness: the wide view sat 95 m up aimed 300 m ahead, which is a 35 degree
   downward pitch, which on a 75 degree lens puts the horizon two degrees from the top edge. The
@@ -76,7 +84,7 @@ Real preset and the shipping draw distance, over nine viewpoints on each of seve
 | | draw calls | triangles |
 |---|---|---|
 | before | 98 | 204,350 |
-| after | 98 | 218,302 |
+| after | 98 | 221,310 |
 
 The far range costs one draw call and gave one back by replacing two meshes with one. The extra
 triangles are the LOD distances, bought deliberately.

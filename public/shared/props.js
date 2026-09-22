@@ -443,9 +443,15 @@ export class PropRenderer {
       // gradient, not variation.
       const j = ((Math.sin(p.x * 91.7 + p.z * 47.3) * 43758.5453) % 1 + 1) % 1;
       const j2 = ((Math.sin(p.z * 31.3 + p.x * 17.9) * 24634.6345) % 1 + 1) % 1;
-      const v = 0.72 + j * 0.40;
+      let v = 0.72 + j * 0.40;
+      let warm = 1;
+      // ROCK ARRIVES TOO DARK TO BE ROCK. The modelled boulders bake at 0.119 linear all over,
+      // which at the exposure the snow now wants is a black silhouette with a white cap on it --
+      // coal, not stone. The instance tint is the right place to fix it: it is already per
+      // instance, so lifting it also gives a scree field the variation a single material cannot.
+      if (p.t === 'rock' || p.t === 'boulder') { v = 1.45 + j * 0.85; warm = 1.10; }
       this.items.push({ x: p.x, z: p.z, keys, m: tmpM.elements.slice(),
-                        c: [v * (1 - j2 * 0.10), v, v * (0.94 + j2 * 0.14)] });
+                        c: [v * warm * (1 - j2 * 0.10), v, v * (0.94 + j2 * 0.14) / warm] });
       for (const k of keys) if (k) caps[k] = (caps[k] || 0) + 1;
     }
     // (re)build the meshes to fit

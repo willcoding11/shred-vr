@@ -179,7 +179,7 @@ export class Viewport {
     if (!this.map) return;
     const e = this.map.env;
     this.scenery.setEnv(this.previewEnv ? e : { timeOfDay: 0.4, fog: 0, snowfall: 0, wind: 0 });
-    if (this.map) this.scenery.setGround(lowestHeight(this.map), 0, ((this.map.size.h - 1) * this.map.spacing) / 2);
+    if (this.map) this.scenery.setGround(this.map);
   }
   setColorMode(mode) { if (this.terrain) { this.terrain.colorMode = mode; this.terrain.recolor(); } }
 

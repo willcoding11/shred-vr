@@ -136,7 +136,7 @@ function applyMap(m, keepPosition = false) {
   rebuildMarkers(); rebuildSpatial();
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
   terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
-  scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
+  scenery.setGround(map);
   if (!rider) rider = new Rider(terrain, { boardLength: settings.boardLength });
   if (!walker) walker = new Walker(terrain);
   // buildBoard draws into whatever group it is given, so the loose board is the same board.
@@ -175,7 +175,7 @@ function settleTerrain() {
   terrain.setRails();                   // the boxes sit on ground that has just moved
   terrain.bakeLight();
   terrain.recolor();
-  scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
+  scenery.setGround(map);
   if (map.lifts && map.lifts.length) rebuildLifts();
   rebuildSpatial();
 }
@@ -398,7 +398,7 @@ live.on('env', (msg) => {
   map.env = { ...map.env, ...msg.env };
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
   terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
-  scenery.setGround(lowestHeight(map), 0, ((map.size.h - 1) * map.spacing) / 2);
+  scenery.setGround(map);
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
   terrain.recolor(); flashLive();
 });
@@ -925,7 +925,12 @@ function shotViews(m) {
     // Looking back UP is the shot that shows what the mountain has above it, which is the half of
     // the picture riding down it never shows you.
     { name: '5-lookback', x: f.x, z: f.z - 24, tx: s.x, tz: s.z, eye: 1.5, aim: 30 },
-    { name: '6-wide', x: mid.x, z: mid.z - 170, tx: mid.x, tz: mid.z + 130, eye: 95, aim: 0 },
+    // LEVEL, not aimed at its own feet. At 95 m up looking 300 m ahead this was pitched 35 degrees
+    // down, and a 75 degree lens pitched 35 degrees down puts the horizon 2 degrees from the top
+    // edge -- so the far range was cropped to the bottom of its own slopes and read as shapes
+    // hanging off the top of the picture. Two hours went into looking for a bug in the terrain
+    // that was in this line. A review shot that lies is worse than no review shot.
+    { name: '6-wide', x: mid.x, z: mid.z - 240, tx: mid.x, tz: mid.z + 500, eye: 65, level: true },
   ].concat(SHOT_EXTRA[m.id] || []);
 }
 
@@ -942,7 +947,12 @@ window.shredShots = async ({ set = 'latest', maps = null, port = 8099, w = 1280,
     for (const id of list) {
       if (id !== map.id) { await loadMapById(id); await new Promise((r) => setTimeout(r, 120)); }
       for (const v of shotViews(map)) {
-        const eyeH = v.eye ?? 1.2, aim = v.aim ?? 0.8;
+        const eyeH = v.eye ?? 1.2;
+        // `level` aims at eye height, so the horizon sits across the middle of the frame whatever
+        // the ground between here and there is doing.
+        const aim = v.level
+          ? Math.max(0.8, terrain.heightAt(v.x, v.z) + eyeH - terrain.heightAt(v.tx, v.tz))
+          : (v.aim ?? 0.8);
         rig.position.set(v.x, terrain.heightAt(v.x, v.z) + eyeH, v.z); rig.rotation.set(0, 0, 0);
         camera.position.set(0, 0, 0);
         camera.lookAt(v.tx, terrain.heightAt(v.tx, v.tz) + aim, v.tz);

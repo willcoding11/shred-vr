@@ -98,7 +98,11 @@ void main(){
   }
 
   // haze band at the horizon so it does not end in a line
-  col = mix(col, mix(vec3(0.80, 0.68, 0.58), vec3(0.84, 0.88, 0.93), day), smoothstep(0.16, -0.14, d.y) * 0.88);
+  // 0.72, not 0.88. At full strength the band reached pure white after the tone curve, so a
+  // mountain range four kilometres out had nothing to be a silhouette against -- the peaks and
+  // the sky arrived at the same value and the range dissolved. Haze at the horizon is bright,
+  // not blown.
+  col = mix(col, mix(vec3(0.80, 0.68, 0.58), vec3(0.84, 0.88, 0.93), day), smoothstep(0.16, -0.14, d.y) * 0.72);
 
   col *= exposure;
   gl_FragColor = vec4(max(col, 0.0), 1.0);

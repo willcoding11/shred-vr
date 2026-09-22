@@ -1,6 +1,6 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
-import { gridToWorld, slopeDegAt, heightAt, normalAt, pisteMask, crustAt, PROP_TYPES } from './mapformat.js';
+import { gridToWorld, slopeDegAt, heightAt, normalAt, pisteMask, crustAt, fbm, PROP_TYPES } from './mapformat.js';
 import { buildRails, railHeightAt, railLift, railSlipAt, railUnder } from './collide.js';
 
 
@@ -429,8 +429,16 @@ export class Terrain {
         // hundred metres, so from the top of the hill the border behind you was a four-hundred-
         // metre wall hanging across the whole view. Tying the run to the drop means the steep
         // edges fall away into the distance instead of standing up in front of you.
-        const drop = (y - DEEP) * (t * t);
-        const run = drop * (1.35 + jitter * 0.75) + Math.sin(t * 9.1 + jitter * 6.3) * 5.0 * t;
+        // A CLIFF BAND, NOT AN APRON.
+        //
+        // This used to fall the whole way to seventy metres under the lowest point of the map and
+        // run out one and a half times as far as it dropped, which on Ridge Line is a 470 m
+        // curtain leaning 700 m outward -- a grey fan covering everything past the edge of the
+        // run from any height. That was the right answer when there was nothing out there but a
+        // flat white disc. There is a mountain range out there now, and it starts 58 m under the
+        // map's own edge, so this only has to cover the join.
+        const drop = Math.min(y - DEEP, 130) * (t * t);
+        const run = drop * (0.50 + jitter * 0.30) + Math.sin(t * 9.1 + jitter * 6.3) * 4.0 * t;
         const cxs = Math.sign(wx) || 1, czs = gz === 0 ? -1 : gz === h - 1 ? 1 : 0;
         pos[v * 3] = wx + (gx === 0 || gx === w - 1 ? cxs * run : 0);
         pos[v * 3 + 1] = y - drop;
@@ -491,6 +499,10 @@ export class Terrain {
     // fine picks up rollers and lips, broad picks up gullies and whole rolls of the hill
     const fine = curvature(H, w, h, gx, gz, 2);
     const broad = curvature(H, w, h, gx, gz, 7);
+    // How much this face is turned toward the sun, across the ground plane only: +1 straight at
+    // it, -1 straight away. Steepness alone cannot tell a sunny face from a shaded one.
+    const sd = this.sunDir;
+    const sunFace = sd ? -(_n[0] * sd.x + _n[2] * sd.z) / Math.max(0.05, Math.hypot(_n[0], _n[2])) : 0;
     const piste = this.piste ? this.piste[g] / 255 : 0;
     // Scoured where it is convex or steep, and not where a machine has been over it.
     const crust = crustAt(fine + broad * 0.5, slope) * (1 - piste);
@@ -508,7 +520,7 @@ export class Terrain {
       // most of why everything looked like it was hovering above the snow rather than in it.
       const wide = curvature(H, w, h, gx, gz, 16);
       const ao = 1 - Math.max(0, Math.min(1, -wide / 9)) * 0.30;
-      snowColor(slope, gx, gz, this.map.env?.snowType, relief, _c);
+      snowColor(slope, gx, gz, this.map.env?.snowType, relief, sunFace, _c);
       // Wind crust is harder, brighter and bluer than the powder beside it, and a groomed strip
       // is very slightly warmer and flatter than either. Both are small moves -- snow is white
       // and stays white -- but they are what turns one surface into three.
@@ -598,15 +610,36 @@ function slopeBandColor(slopeDeg, out) {
 }
 
 // Snow tint: bright groomed white, bluer in the shade of steep faces, grey-brown rock above ~50 deg.
-function snowColor(slopeDeg, x, z, snowType, relief, out) {
+const smooth01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+
+function snowColor(slopeDeg, x, z, snowType, relief, sunFace, out) {
   const grain = ((Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1 + 1) % 1;
   let r = 0.93, g = 0.95, b = 0.985;
   if (snowType === 'powder') { r = 0.96; g = 0.97; b = 1.0; }
   if (snowType === 'ice') { r = 0.86; g = 0.92; b = 0.99; }
   const t = Math.min(1, Math.max(0, (slopeDeg - 30) / 25));      // 30..55 deg -> blue shade
   r = r * (1 - t * 0.28); g = g * (1 - t * 0.18); b = b * (1 - t * 0.05);
-  const rock = Math.min(1, Math.max(0, (slopeDeg - 58) / 10));  // only near-vertical faces read as rock
-  r = r * (1 - rock) + 0.38 * rock; g = g * (1 - rock) + 0.36 * rock; b = b * (1 - rock) + 0.34 * rock;
+  // THE MOUNTAIN HAD NO BONES.
+  //
+  // At 58 degrees nothing on any of these maps was rock. The summit and the headwall were smooth
+  // white domes, Ridge Line's cliff band was a white step, the couloir's rock walls were snow,
+  // and the only thing separating a 20 degree slope from a 50 degree one was a slightly bluer
+  // white. Snow does not sit on anything past about 40 degrees for long; every ridge on a real
+  // mountain shows its rock, and that dark is what the eye measures all the white against.
+  //
+  // The threshold is broken by noise so the boundary is ragged rather than a contour line, and
+  // biased by ASPECT: a face turned away from the sun holds its snow several degrees steeper
+  // than one baking in it, which is why one side of a ridge is white and the other is grey.
+  const nz = fbm(x * 0.055, z * 0.055, 3, 2.1, 0.55);
+  const lo = 36 + nz * 11 + Math.max(0, -sunFace) * 7;
+  const rock = smooth01((slopeDeg - lo) / 13);
+  if (rock > 0) {
+    // Not one flat grey. Rock is banded, and a cliff at a single value reads as cardboard.
+    const v = 0.30 + ((Math.sin(x * 7.13 + z * 3.77) * 4375.5) % 1 + 1) % 1 * 0.14 + nz * 0.06;
+    r = r * (1 - rock) + (v * 1.06) * rock;
+    g = g * (1 - rock) + (v * 1.00) * rock;
+    b = b * (1 - rock) + (v * 0.96) * rock;
+  }
   // Relief: hollows darker AND bluer, crests brighter and a touch warmer. Snow in shadow is
   // strongly blue in life, and leaning on that colour shift rather than brightness alone keeps
   // the hill readable without making it look grey and dirty.

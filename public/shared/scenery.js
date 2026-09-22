@@ -1,7 +1,7 @@
 // Sky, sun, distant peaks, fog and falling snow. Shared by game + editor.
 import * as THREE from 'three';
 import { realSkyVert, realSkyFrag } from './realism.js';
-import { fbm } from './mapformat.js';
+import { fbm, heightAt } from './mapformat.js';
 import { makeSnowTexture } from './terrain.js';
 
 const skyVert = `
@@ -60,7 +60,7 @@ export class Scenery {
       zenith: { value: new THREE.Color(0x3d7dd8) }, horizon: { value: new THREE.Color(0xdbe8f7) },
       sunDir: { value: new THREE.Vector3(0.3, 0.6, 0.2).normalize() }, sunColor: { value: new THREE.Color(0xfff2d0) },
       sunSize: { value: 1.0 },
-      turbidity: { value: 2.0 }, exposure: { value: 1.25 }, cloud: { value: 0.45 }, time: { value: 0 },
+      turbidity: { value: 2.0 }, exposure: { value: 1.06 }, cloud: { value: 0.45 }, time: { value: 0 },   // 1.25 clipped the horizon to white
     };
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(4000, real ? 64 : 32, real ? 32 : 16), new THREE.ShaderMaterial({
       uniforms: this.skyUniforms,
@@ -72,26 +72,23 @@ export class Scenery {
     scene.add(this.sky);
 
     scene.fog = new THREE.Fog(0xdbe8f7, 200, 1400);
-    if (mountains) scene.add(this.mountains = makeMountains());
+    this.wantMountains = mountains;
+    if (mountains) scene.add(this.mountains = makeMountains(null));
     this.snow = makeSnowfall(); scene.add(this.snow.points);
     this.env = {};
     this.setEnv({ timeOfDay: 0.35, fog: 0.35, snowfall: 0.2 });
   }
 
-  // Drop the distant valley floor below the map. It is a 2.6 km disc that fills the gap between
-  // the terrain edge and the mountains, it rides along with the camera, and it used to sit at a
-  // fixed world height of -98 m. The runs descend 116 to 365 m, so on two of the three maps it
-  // sliced straight through the hill: stand at the top, and a hard white plane cut off everything
-  // below it. It has to live under the lowest point of whatever map is loaded.
-  // Also where the map IS. The ring used to be re-centred on the camera every frame, which hid
-  // the fact that it is built around its own origin; standing it still without also moving it to
-  // the middle of the map left it centred on the map's north edge, so half of it sat behind the
-  // mountain and the other half was a kilometre too far away.
-  setGround(lowestY, cx = 0, cz = 0) {
-    if (!this.mountains) return;
-    this.mountains.position.set(cx, this.mountains.userData.baseY, cz);
-    const floor = this.mountains.userData.floor;
-    if (floor) floor.position.y = lowestY - 12 - this.mountains.userData.baseY;
+  // THE WORLD OUTSIDE THE MAP.
+  //
+  // Built around the map's own footprint, because the ring has to start exactly where the
+  // playable ground stops. Called whenever a map is loaded or its shape settles.
+  setGround(map) {
+    if (!this.mountains || !map) return;
+    this.scene.remove(this.mountains);
+    this.mountains.geometry.dispose();
+    this.mountains = makeMountains(map);
+    this.scene.add(this.mountains);
   }
 
   // Swap the look without tearing the scene down. Only the sky material and the shadow
@@ -192,61 +189,141 @@ export class Scenery {
     this.sunTarget.position.copy(viewerPos);
     this.sun.position.copy(viewerPos).addScaledVector(this.sunDir, 220);
     this.sky.position.copy(camera.position);
-    // The ring used to be pinned to the camera every frame, so 480 m of descent moved the far
-    // peaks not one pixel and the strongest scale cue in the scene was dead. The map is a kilometre
-    // across and the ring starts at 1.2 km, so letting it stand still costs nothing and buys the
-    // parallax back.
-    if (this.mountains?.userData.pinned) this.mountains.position.set(camera.position.x, this.mountains.userData.baseY, camera.position.z);
+    // The far country is a fixed place in the world. It used to be pinned to the camera, so 480 m
+    // of descent moved the far peaks not one pixel and the strongest scale cue in the scene was dead.
     this.snow.update(dt, camera.position, this.env.wind ?? 0.2);
   }
 }
 
-const _HAZE = new THREE.Color(0.72, 0.79, 0.90);
-function makeMountains() {
-  // A ring of jagged peaks 1.2 - 2.5 km out, drawn as a cylinder strip with an fbm skyline.
-  const segs = 220, rings = 6, R0 = 1200, R1 = 2600;
+const _HAZE = new THREE.Color(0.58, 0.67, 0.83);
+
+// Ridged noise: fbm folded about zero and sharpened, which is what turns rounded hills into
+// aretes. Real ridgelines are creases where two faces meet, and ordinary fbm cannot make a crease.
+// FOUR OCTAVES, NOT FIVE, AND A LONGER BASE WAVELENGTH -- because the shells grow outward and the
+// outermost one samples the ring every 90 m. A fifth octave puts 73 m detail into a 90 m sample
+// spacing, and undersampled ridged noise does not look rough, it looks like white shards thrown
+// into the sky. The finest octave here is a 280 m wavelength, which the outer shells can hold.
+function ridged(x, z, oct = 4) {
+  let v = 0, amp = 0.5, f = 1;
+  for (let i = 0; i < oct; i++) {
+    const n = 1 - Math.abs(fbm(x * f, z * f, 1, 2, 0.5) * 2 - 1);
+    v += n * n * amp;
+    amp *= 0.52; f *= 2.07;
+  }
+  return Math.min(1, v * 1.15);
+}
+
+// ---------------------------------------------------------------- the far country
+//
+// WHAT WAS THERE BEFORE WAS A CUT-OUT ON A PLATE.
+//
+// A cylinder strip of flat-shaded peaks standing 1.2 km out, with a 2.6 km disc of untextured
+// white underneath it to cover the gap. From anywhere high on the hill you could see the disc's
+// circular rim, the peaks read as folded paper because flat shading on a skyline with one value
+// per face has no way not to, and between the edge of the map and that ring there was nothing at
+// all -- no foothills, no shoulders, no receding ridges. Which is why the mountain had no
+// distance in it, and distance is most of what a mountain picture is.
+//
+// This is a real heightfield instead, and it starts exactly where the map stops. Polar around
+// the map centre, but with the inner radius following the map's own rectangle, so a run that is
+// 220 m wide and a kilometre long gets country hugging both of its long sides rather than a
+// circle inscribed somewhere beyond the corners. Fourteen shells with the spacing growing
+// outward: dense where you can see detail, coarse where you cannot.
+//
+// 7,000 triangles in one draw call, against 2,600 for the strip plus a disc in two.
+function makeMountains(map) {
+  const S = 256, K = 18, RMAX = 3200;
+  // With no map yet (the editor builds Scenery before it loads one) stand in with a square
+  // kilometre; setGround rebuilds this the moment a real one arrives.
+  const a = map ? ((map.size.w - 1) * map.spacing) / 2 : 500;
+  const b = map ? ((map.size.h - 1) * map.spacing) / 2 : 500;
+  const cz = b;
   const pos = [], col = [], idx = [];
   const c = new THREE.Color();
-  for (let j = 0; j <= rings; j++) {
-    const r = R0 + (R1 - R0) * (j / rings);
-    for (let i = 0; i <= segs; i++) {
-      const a = (i / segs) * Math.PI * 2;
-      const ridge = 0.5 + 0.5 * fbm(Math.cos(a) * 3.1 + 10, Math.sin(a) * 3.1 + 5, 5, 2.1, 0.55);
-      const peakness = Math.pow(ridge, 1.6);
-      const y = -60 + peakness * (380 + 380 * (j / rings)) * (0.6 + 0.4 * Math.sin(j * 1.3 + a * 7));
-      pos.push(Math.cos(a) * r, y, Math.sin(a) * r);
-      // Coloured by STEEPNESS as well as height, so rock bands show on the faces too steep to
-      // hold snow, and washed toward the sky with distance. One snowline test gave every peak a
-      // single flat value and the whole ring read as folded paper.
-      const steep = Math.min(1, Math.abs(Math.sin(a * 11.0 + j * 2.3)) * 0.45 + peakness * 0.5);
-      const snowy = Math.max(0, Math.min(1, (y - 20) / 110)) * (1 - steep * 0.72);
-      const rock = 1 - snowy;
-      c.setRGB(0.34 * rock + 0.92 * snowy, 0.35 * rock + 0.95 * snowy, 0.41 * rock + 1.0 * snowy);
-      c.lerp(_HAZE, Math.min(0.64, ((r - R0) / (R1 - R0)) * 0.55 + 0.08));
-      col.push(c.r, c.g, c.b);
+  const sm = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+
+  for (let k = 0; k <= K; k++) {
+    // Growth, not even spacing: the first shells are metres apart and the last are hundreds, so
+    // the silhouette stays smooth where it is 3 km away and the shoulder just past the map edge
+    // still has enough vertices to be a shoulder.
+    // 1.55 rather than 1.75, over eighteen shells rather than fourteen. Too much growth and the
+    // outermost quads are five hundred metres deep by ninety wide, which the ridged noise then
+    // folds into near-vertical slivers you see edge-on as dark splinters lying across the range.
+    const t = Math.pow(k / K, 1.55);
+    for (let i = 0; i <= S; i++) {
+      const th = (i / S) * Math.PI * 2;
+      const ct = Math.cos(th), st = Math.sin(th);
+      // Where the map's own rectangle ends in this direction.
+      const r0 = Math.min(Math.abs(a / (Math.abs(ct) < 1e-4 ? 1e-4 : ct)),
+                          Math.abs(b / (Math.abs(st) < 1e-4 ? 1e-4 : st)));
+      const r = r0 + (RMAX - r0) * t;
+      const x = ct * r, z = cz + st * r;
+      // The map's height where the ring meets it, so the two never disagree about where the
+      // ground is. Sampled a hair inside so it is a real reading rather than a clamp.
+      const eh = map ? heightAt(map, ct * r0 * 0.995, cz + st * r0 * 0.995) : 0;
+      const d = r - r0;
+      // Down into a valley first, and only then up. A mountain you are standing on is higher than
+      // what is immediately around it, and skipping that step is what made the old ring look like
+      // a wall around a garden.
+      const floor = eh - 58 - 210 * sm(d / 520);
+      const grow = Math.pow(sm(d / 1700), 1.15);
+      const y = floor + ridged(x * 0.00040 + 40, z * 0.00040 + 11) * (980 * grow);
+      pos.push(x, y, z);
+      col.push(0, 0, 0);      // filled once the normals exist
     }
   }
-  for (let j = 0; j < rings; j++) for (let i = 0; i < segs; i++) {
-    const a = j * (segs + 1) + i, b = a + 1, d = a + segs + 1, e = d + 1;
-    idx.push(a, b, d, b, e, d);
+  for (let k = 0; k < K; k++) for (let i = 0; i < S; i++) {
+    const p0 = k * (S + 1) + i, p1 = p0 + 1, p2 = p0 + S + 1, p3 = p2 + 1;
+    idx.push(p0, p2, p1, p1, p2, p3);
   }
-  // fill the floor between the terrain edge and the mountains
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();          // smooth, not flat: a 3 km ridge is not made of facets
+
+  // Colour after the normals, because what is rock and what is snow is a question about slope.
+  const nrm = g.attributes.normal;
+  const lowest = map ? lowestOf(map) : -200;
+  for (let v = 0; v < pos.length / 3; v++) {
+    const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+    const slope = Math.acos(Math.min(1, Math.max(-1, nrm.getY(v)))) * 57.2958;
+    // Snow above the line and off the steep faces -- the same rule the playable hill uses, so
+    // the far country and the near ground agree about what a mountain is made of.
+    // A snow line, and it has to be high enough that there is rock under it. Everything white
+    // is the same failure as everything groomed: no contrast, no distance, no mountain.
+    const high = sm((y - (lowest + 40)) / 460);
+    const snowy = high * (1 - sm((slope - 33) / 20));
+    const rock = 1 - snowy;
+    const shade = 0.30 + 0.13 * (((Math.sin(x * 0.021 + z * 0.013) * 4375.5) % 1 + 1) % 1);
+    c.setRGB(shade * 1.05 * rock + 0.93 * snowy, shade * rock + 0.95 * snowy, shade * 0.98 * rock + 1.0 * snowy);
+    // Aerial perspective, and it has to be strong. Contrast falling off with distance is the
+    // single cue that tells you a ridge is four kilometres away rather than four hundred metres.
+    const d = Math.hypot(x, z - cz);
+    // Capped well short of one: a ridge that reaches the sky's own value is a ridge you
+    // cannot see, and the sky is nearly white at the horizon.
+    c.lerp(_HAZE, Math.min(0.62, sm((d - 400) / 2400) * 0.68));
+    col[v * 3] = c.r; col[v * 3 + 1] = c.g; col[v * 3 + 2] = c.b;
+  }
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  g.setIndex(idx); g.computeVertexNormals();
-  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
-  m.userData.baseY = -40; m.userData.pinned = false; m.frustumCulled = false; m.name = 'mountains';
-  // The valley floor. A flat untextured disc at one value is a dead giveaway at any distance,
-  // and it is a big part of frame from anywhere high on the hill.
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0xe9f0f8, roughness: 0.95 });
-  floorMat.map = makeSnowTexture(256); floorMat.map.repeat.set(160, 160);
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(1300, 64), floorMat);
-  floor.rotation.x = -Math.PI / 2; floor.position.y = -58; floor.receiveShadow = false;
-  floor.name = 'valleyFloor';
-  m.add(floor);
-  m.userData.floor = floor;
+
+  // NOT FOGGED BY THE SCENE. The scene's fog reaches white by four kilometres, which is where
+  // this thing lives, so the range was arriving at very nearly the colour of the sky and what you
+  // saw was the handful of peaks that happened to poke above the haze band -- pale shards
+  // floating over a white gap, with the ridges that joined them invisible. It carries its own
+  // aerial perspective in the vertex colours instead, which is the same effect under control:
+  // strong enough that four kilometres reads as four kilometres, capped short of the sky's value
+  // so a ridge always stays a ridge.
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, fog: false }));
+  m.frustumCulled = false; m.name = 'mountains';
+  m.userData.baseY = 0; m.userData.pinned = false;
   return m;
+}
+
+function lowestOf(map) {
+  let lo = Infinity;
+  const H = map.heights;
+  for (let i = 0; i < H.length; i += 7) if (H[i] < lo) lo = H[i];
+  return lo === Infinity ? -200 : lo;
 }
 
 function makeSnowfall(count = 1400) {

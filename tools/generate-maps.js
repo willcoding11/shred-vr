@@ -724,7 +724,7 @@ function couloir() {
   map.description = 'A rock-walled chute that never opens up, with an ice band halfway and a sudden apron at the bottom.';
   map.order = 6;
   const rand = rnd(17);
-  map.env = { ...map.env, snowType: 'ice', timeOfDay: 0.22, fog: 0.4 };
+  map.env = { ...map.env, snowType: 'ice' };   // the hour and the weather are in WEATHER, below
 
   const cx = (z) => (
     z < 70 ? 0
@@ -807,7 +807,7 @@ function alpineBowl() {
   map.description = 'An open mountain. Four faces around one valley, a cirque, a gully, cliffs, a frozen tarn and a park, all draining to the village.';
   map.order = 0;
   map.freeride = true;
-  map.env = { ...map.env, timeOfDay: 0.26, fog: 0.26, snowfall: 0.12, snowType: 'groomed', wind: 0.25 };
+  map.env = { ...map.env, snowType: 'groomed' };   // the hour and the weather are in WEATHER, below
   const rand = rnd(7781);
   const { w, h } = map.size, sp = map.spacing;
   const BX = 0, BZ = 905;                      // the village: everything on the map runs to here
@@ -1427,8 +1427,35 @@ function alpineBowl() {
   return map;
 }
 
+// ---------------------------------------------------------------- the colour script
+//
+// Six runs were shipping with the identical sky. Five of them used the default 0.35 time of day,
+// 0.35 fog and 0.20 snowfall straight out of createMap, and the other two were within a few
+// hundredths of it, so every map was the same mid-morning white and the game had exactly one
+// mood in it. That is most of why the mountain reads as a place nobody has been rather than a
+// place: weather is the thing a mountain does, and ours was not doing any.
+//
+// Each run now gets an hour and commits to it. The times are chosen for the SUN'S AZIMUTH as much
+// as its height -- setEnv puts the sun at az = (t - 0.5) * 1.2pi - 0.23, so t near 0.5 aims it
+// almost straight down the fall line, which is the one direction that lights every face of a
+// mountain equally and is why noon looks flat. 0.14 and 0.84 rake hard across the slope from
+// opposite sides; 0.66 lights it from the other hand than 0.40 does.
+//
+// snowType is deliberately left alone. It is friction, the rider can feel it, and this pass is
+// only allowed to change what the picture looks like.
+const WEATHER = {
+  'alpine-bowl': { timeOfDay: 0.30, fog: 0.26, snowfall: 0.12, wind: 0.25 },  // clear morning, the postcard
+  'first-tracks': { timeOfDay: 0.40, fog: 0.30, snowfall: 0.05, wind: 0.12 }, // bluebird: nothing to fight but the board
+  'glade-run': { timeOfDay: 0.66, fog: 0.34, snowfall: 0.15, wind: 0.22 },    // afternoon, lit from the other side
+  'ridge-line': { timeOfDay: 0.14, fog: 0.22, snowfall: 0.08, wind: 0.40 },   // first light, long shadows, cold
+  'cornice': { timeOfDay: 0.84, fog: 0.30, snowfall: 0.06, wind: 0.28 },      // golden hour, for the big jump
+  'spine-line': { timeOfDay: 0.44, fog: 0.62, snowfall: 0.80, wind: 0.65 },   // in a storm, and you can barely see the spine
+  'couloir': { timeOfDay: 0.20, fog: 0.45, snowfall: 0.25, wind: 0.35 },      // north-facing, the sun never gets in
+};
+
 const maps = [alpineBowl(), firstTracks(), gladeRun(), ridgeLine(), cornice(), spineLine(), couloir()];
 for (const m of maps) {
+  if (WEATHER[m.id]) m.env = { ...m.env, ...WEATHER[m.id] };
   fs.writeFileSync(path.join(MAPS, `${m.id}.json`), JSON.stringify(serializeMap(m)));
   const s = mapStats(m);
   console.log(`${m.id}: ${s.lengthM}m x ${s.widthM}m, drop ${s.verticalDropM.toFixed(0)}m, avg ${s.avgGradeDeg.toFixed(1)} deg, max ${s.maxSlopeDeg.toFixed(0)} deg, steep ${s.steepPct.toFixed(1)}%, props ${s.props}, gates ${s.gates}`);

@@ -87,7 +87,7 @@ ${sway > 0 ? `{
     // thirty per cent needle, and the stand stayed white. Snow on a branch is a narrow band on
     // top of it, not a coat over the whole thing.
     float _up = smoothstep( 0.55, 0.95, vUpN );
-    vec3 _needle = vec3( 0.035, 0.062, 0.045 );
+    vec3 _needle = vec3( 0.044, 0.076, 0.056 );
     diffuseColor.rgb = mix( diffuseColor.rgb, mix( _needle, diffuseColor.rgb, _up ), _snowy * uCanopy );
   }
 
@@ -353,7 +353,10 @@ export class PropRenderer {
     // InstancedMesh, so this is one more material, not one more draw call -- and it means the
     // canopy rule can be aggressive without touching a hut roof or the top of a rail.
     this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88 });
-    snowOnTop(this.treeMat, { canopy: 1.0, sway: 1.0 });
+    // Softer on Fast. The needle colour is an ALBEDO, and Fast has no environment map -- only the
+    // hemisphere -- so the same number that gives a deep forest green under the Real preset takes
+    // a stand most of the way to black under this one.
+    snowOnTop(this.treeMat, { canopy: quality === 'real' ? 1.0 : 0.68, sway: 1.0 });
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
     this.meshes = {};
     this.items = [];

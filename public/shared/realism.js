@@ -175,8 +175,11 @@ export function snowNormalMap(size = 512) {
 //   SUBSURFACE. Light goes into snow, bounces around and comes back out, which is why shadows on
 //   snow are blue and bright rather than dark and grey. Without it snow lit by a low sun looks
 //   like grey plastic.
-export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1 } = {}) {
+export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1, aerial = 1, texture = null } = {}) {
+  const mean = (texture && texture.userData.meanLinear) || [0.807, 0.847, 0.913];
   mat.userData.realUniforms = {
+    uSnowBase: { value: new THREE.Vector3(mean[0], mean[1], mean[2]) },
+    uAerial: { value: aerial },
     uSparkle: { value: sparkle },
     uSubsurface: { value: subsurface },
     uSunDir: { value: new THREE.Vector3(0.3, 0.6, 0.2) },
@@ -185,10 +188,38 @@ export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1 } = {}) {
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, mat.userData.realUniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vRealWorld;\nvarying vec3 vRealNormal;')
-      .replace('#include <worldpos_vertex>',
-        '#include <worldpos_vertex>\n  vRealWorld = (modelMatrix * vec4(transformed,1.0)).xyz;\n  vRealNormal = normalize(mat3(modelMatrix) * objectNormal);');
+      .replace('#include <common>', `#include <common>
+      varying vec3 vRealWorld;
+      varying vec3 vRealNormal;
+      attribute vec2 aSnow;
+      varying vec2 vSnow;`)
+      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+      vRealWorld = (modelMatrix * vec4(transformed,1.0)).xyz;
+      vRealNormal = normalize(mat3(modelMatrix) * objectNormal);
+      vSnow = aSnow;`);
     shader.fragmentShader = shader.fragmentShader
+      // CORDUROY BELONGS ON THE PISTE AND NOWHERE ELSE.
+      //
+      // This texture was multiplied over every square metre of every map, so the gully walls, the
+      // summit headwall, the cornice, the rock chute and the village apron all wore the same
+      // machine lines -- and when every surface on a mountain is the same surface there is
+      // nothing for the eye to measure any of it against. That is what "it looks empty" was.
+      //
+      // Taking it back out is a subtraction rather than a second texture. The deviation of a
+      // texel from the texture's own mean IS the pattern, so scaling that deviation toward zero
+      // leaves exactly the mean behind and the snow does not change brightness by a hair. The
+      // texture untouched snow does have then comes from the micro-relief below, which is where
+      // it comes from in life too.
+      //
+      // The subtraction has to happen in the space the texel is in. map_fragment runs before
+      // color_fragment, so here diffuseColor is the material colour times the texel and the
+      // vertex colour has not arrived yet -- the mean is scaled by the material colour alone.
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      #ifdef USE_MAP
+        vec3 _base = uSnowBase * diffuse;
+        diffuseColor.rgb = _base + ( diffuseColor.rgb - _base ) * mix( 0.14, 1.0, vSnow.x );
+      #endif
+      `)
       // TWO SCALES OF NORMAL. The map repeated once every 1.33 m and that single frequency was
       // the only thing you could actually see in the snow -- at riding height it read as fabric
       // weave. A second sample seven times finer, faded in over the last twenty metres, gives the
@@ -201,28 +232,33 @@ export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1 } = {}) {
       vec3 nA = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
       vec3 nB = texture2D( normalMap, vNormalMapUv * 7.3 ).xyz * 2.0 - 1.0;
       vec3 mapN = normalize( vec3( nA.xy + nB.xy * _fine * 0.85, nA.z ) );
-      mapN.xy *= normalScale;
+      // Groomed snow is a machined surface with almost no micro-relief left on it; untouched snow
+      // is nothing but micro-relief, and wind crust is the most textured thing on the hill. One
+      // mask, three surfaces, no extra fetches.
+      mapN.xy *= normalScale * mix( 1.45 + vSnow.y * 0.9, 0.42, vSnow.x );
       normal = normalize( tbn * mapN );
     #else
       #include <normal_fragment_maps>
     #endif
       `)
-      // ZONE ROUGHNESS. The cheapest realism available: the same sun over a surface that is 0.45
-      // rough in one place and 0.80 in another separates tracked-out, wind-crusted and untouched
-      // snow without a single new texture. The mask comes off the UV, which on the terrain is
-      // world x/z in units of 8 m, so these are hundred-metre zones, not noise.
+      // ROUGHNESS FROM THE SNOW ITSELF.
+      //
+      // This used to be two sines of the UV -- invented hundred-metre zones with no relationship
+      // to anything on the map, which is a texture pretending to be information. It costs the
+      // same three instructions to read the state that is actually there: a groomed strip is
+      // smooth and picks up a sheen along the sun, wind crust is smoother still and close to
+      // polished, and untouched powder is about as rough as a surface gets.
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 {
-  vec2 zp = vMapUv;
-  float z1 = sin( zp.x * 0.19 + sin( zp.y * 0.13 ) * 2.1 );
-  float z2 = sin( zp.y * 0.11 + sin( zp.x * 0.09 ) * 1.7 );
-  float zone = clamp( 0.5 + 0.28 * z1 + 0.22 * z2, 0.0, 1.0 );
-  roughnessFactor = clamp( roughnessFactor * ( 0.68 + 0.52 * zone ), 0.04, 1.0 );
+  float rough = mix( 1.06, 0.74, vSnow.x );          // powder -> piste
+  rough = mix( rough, 0.62, vSnow.y );               // -> wind crust
+  roughnessFactor = clamp( roughnessFactor * rough, 0.04, 1.0 );
 }`)
       .replace('#include <common>', `#include <common>
 varying vec3 vRealWorld;
 varying vec3 vRealNormal;
-uniform float uSparkle; uniform float uSubsurface; uniform vec3 uSunDir; uniform vec3 uSkyTint;
+uniform float uSparkle; uniform float uSubsurface; uniform float uAerial;
+uniform vec3 uSunDir; uniform vec3 uSkyTint; uniform vec3 uSnowBase; varying vec2 vSnow;
 float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
 {
@@ -269,7 +305,7 @@ float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 4
       .replace('#include <tonemapping_fragment>', `#include <tonemapping_fragment>
 {
   float ad = length(cameraPosition - vRealWorld);
-  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.60, 0.69, 0.84), smoothstep(110.0, 950.0, ad) * 0.36);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.60, 0.69, 0.84), smoothstep(110.0, 950.0, ad) * 0.36 * uAerial);
 }`);
   };
   mat.needsUpdate = true;

@@ -1,6 +1,6 @@
 // Heightfield mesh for a map (three.js). Shared by the game and the editor.
 import * as THREE from 'three';
-import { gridToWorld, slopeDegAt, heightAt, normalAt, PROP_TYPES } from './mapformat.js';
+import { gridToWorld, slopeDegAt, heightAt, normalAt, pisteMask, crustAt, PROP_TYPES } from './mapformat.js';
 import { buildRails, railHeightAt, railLift, railSlipAt, railUnder } from './collide.js';
 
 
@@ -46,6 +46,15 @@ export function makeSnowTexture(size = 512) {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 1);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 16;   // 4 was moire-ing badly at grazing angles
+  // THE MEAN, in linear light. The corduroy lives in this texture, and off the piste it has to
+  // come back out -- which you can only do without changing how bright the snow is if you know
+  // what the texture averages to. Measured rather than assumed, so editing the pattern above
+  // cannot silently darken every unpisted slope on the mountain.
+  let mr = 0, mg = 0, mb = 0;
+  const srgb = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+  for (let i = 0; i < d.length; i += 4) { mr += srgb(d[i] / 255); mg += srgb(d[i + 1] / 255); mb += srgb(d[i + 2] / 255); }
+  const px = d.length / 4;
+  t.userData.meanLinear = [mr / px, mg / px, mb / px];
   return t;
 }
 
@@ -83,6 +92,10 @@ export class Terrain {
       // snow is not shiny, but a dead-matte surface gives the sun nothing to shape it with
       roughness: quality === 'real' ? 0.66 : 0.82,
     });
+    // The snow-state mask is read by the shader on both presets. Corduroy over the whole mountain
+    // is not a Real-preset problem, it is a wrong-picture problem, and Fast has it worse because
+    // it has less else going on.
+    if (quality !== 'real' && texture) patchSnowMaterial(this.material, { sparkle: 0, subsurface: 0, aerial: 0, texture: this.material.map });
     if (quality === 'real') {
       // Micro-relief and the two things a standard material cannot do for snow on its own.
       // 2.2 REPEATS, NOT 6, and a scale that can be seen.
@@ -97,7 +110,7 @@ export class Terrain {
       nm.repeat.set(2.2, 2.2);          // one tile every 3.6 m: wind lineation at 30-60 cm
       this.material.normalMap = nm;
       this.material.normalScale = new THREE.Vector2(1.3, 1.3);
-      patchSnowMaterial(this.material, { sparkle: 1, subsurface: 1 });
+      patchSnowMaterial(this.material, { sparkle: 1, subsurface: 1, aerial: 1, texture: this.material.map });
     }
     // ONE MESH PER TILE, not one mesh for the mountain.
     //
@@ -208,6 +221,10 @@ export class Terrain {
     const cw = x1 - x0 + 1, ch = z1 - z0 + 1, n = cw * ch;
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
     const nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+    // Two numbers per vertex that say what KIND of snow this is: how groomed it is, and how much
+    // the wind has had off it. Everything downstream -- whether the corduroy shows, how rough the
+    // surface is, how strong the micro-relief is, what colour it is -- reads these.
+    const snw = new Float32Array(n * 2);
     for (let lz = 0; lz < ch; lz++) for (let lx = 0; lx < cw; lx++) {
       const i = lz * cw + lx;
       const [wx, wz] = gridToWorld(this.map, x0 + lx, z0 + lz);
@@ -219,6 +236,7 @@ export class Terrain {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('aSnow', new THREE.BufferAttribute(snw, 2));
 
     // A stride only works if it divides the tile exactly, which the last row and column of tiles
     // on a map whose size is not a multiple of 32 will not. Those simply keep fewer levels.
@@ -303,6 +321,10 @@ export class Terrain {
   // until something calls setSun or rebuild again. That is a fair trade for not spending 80 ms
   // per brush dab.)
   bakeLight() {
+    // The piste comes off the shape of the hill, so it is recomputed exactly when the shape is:
+    // on a rebuild, on a sun change, and when an editor stroke settles. About four milliseconds
+    // on the biggest map, next to eighty for the sun bake it shares this call with.
+    this.piste = pisteMask(this.map);
     const { w, h } = this.map.size, sp = this.map.spacing, H = this.map.heights;
     const n = w * h;
     if (!this.bake || this.bake.length !== n) this.bake = new Float32Array(n);
@@ -446,7 +468,7 @@ export class Terrain {
       for (let gz = az0; gz <= az1; gz++) for (let gx = ax0; gx <= ax1; gx++) this.writeVertex(c, gx, gz);
       // whole rows, so one contiguous upload per attribute rather than one per cell
       const from = (az0 - c.z0) * c.cw, count = (az1 - az0 + 1) * c.cw;
-      for (const a of [c.geo.attributes.position, c.geo.attributes.color, c.geo.attributes.normal]) {
+      for (const a of [c.geo.attributes.position, c.geo.attributes.color, c.geo.attributes.normal, c.geo.attributes.aSnow]) {
         if (a.addUpdateRange) { a.addUpdateRange(from * a.itemSize, count * a.itemSize); a.needsUpdate = true; }
         else a.needsUpdate = true;
       }
@@ -466,18 +488,32 @@ export class Terrain {
     normalAt(this.map, wx, wz, _n);
     nrmA[i * 3] = _n[0]; nrmA[i * 3 + 1] = _n[1]; nrmA[i * 3 + 2] = _n[2];
     const slope = Math.acos(Math.min(1, _n[1])) * 57.2958;
+    // fine picks up rollers and lips, broad picks up gullies and whole rolls of the hill
+    const fine = curvature(H, w, h, gx, gz, 2);
+    const broad = curvature(H, w, h, gx, gz, 7);
+    const piste = this.piste ? this.piste[g] / 255 : 0;
+    // Scoured where it is convex or steep, and not where a machine has been over it.
+    const crust = crustAt(fine + broad * 0.5, slope) * (1 - piste);
+    const snwA = c.geo.attributes.aSnow;
+    snwA.array[i * 2] = piste; snwA.array[i * 2 + 1] = crust;
     if (this.colorMode === 'slope') slopeBandColor(slope, _c);
     else {
-      // fine picks up rollers and lips, broad picks up gullies and whole rolls of the hill
-      const fine = curvature(H, w, h, gx, gz, 2);
-      const broad = curvature(H, w, h, gx, gz, 7);
-      const relief = Math.max(-1, Math.min(1, fine / 0.55 + broad / 4.0)) * this.relief;
+      // OFF-PISTE SHOWS ITS SHAPE, GROOMED SNOW HIDES IT. A machine fills the hollows and cuts
+      // the crests, which is the entire reason a piste is comfortable and the reason it reads
+      // flat; untouched snow keeps every roll the ground under it has. So the curvature shading
+      // is turned down where the piste is and up where it is not, off the same mask.
+      const relief = Math.max(-1, Math.min(1, fine / 0.55 + broad / 4.0)) * this.relief * (1.25 - piste * 0.55);
       // Ambient occlusion, from a third and much wider curvature: concave ground sees less of
       // the sky, so it is darker and bluer. Nothing in the scene had any AO at all, which is
       // most of why everything looked like it was hovering above the snow rather than in it.
       const wide = curvature(H, w, h, gx, gz, 16);
       const ao = 1 - Math.max(0, Math.min(1, -wide / 9)) * 0.30;
       snowColor(slope, gx, gz, this.map.env?.snowType, relief, _c);
+      // Wind crust is harder, brighter and bluer than the powder beside it, and a groomed strip
+      // is very slightly warmer and flatter than either. Both are small moves -- snow is white
+      // and stays white -- but they are what turns one surface into three.
+      if (crust > 0.002) { _c.r += (0.94 - _c.r) * crust * 0.30; _c.g += (0.97 - _c.g) * crust * 0.30; _c.b += (1.04 - _c.b) * crust * 0.34; }
+      if (piste > 0.002) { _c.r += (1.00 - _c.r) * piste * 0.12; _c.g += (1.00 - _c.g) * piste * 0.10; _c.b += (0.995 - _c.b) * piste * 0.06; }
       _c.r *= ao; _c.g *= ao * 1.008; _c.b *= ao * 1.02;
       const ice = this.iceAt(wx, wz);
       if (ice > 0) _c.lerp(_ICE, ice * 0.85);

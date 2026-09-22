@@ -287,6 +287,125 @@ export function unionRect(a, b) {
 // Stats used by the editor's info panel and the map critic.
 // Lowest point on the map. The distant valley floor has to sit under this, or it cuts through
 // the hill and hides everything below it.
+// ---------------------------------------------------------------- where the piste is
+//
+// A MOUNTAIN IS MOSTLY NOT GROOMED, and ours was groomed everywhere.
+//
+// One corduroy texture was tiled over every square metre of every map: the piste, the gully
+// walls, the summit headwall, the cornice, the rock chute and the village apron all carried the
+// same 20 cm machine lines. That single fact is most of what made the world read as empty -- not
+// because corduroy looks bad, but because when everything is one surface there is nothing to
+// compare anything to, and a mountain is legible precisely through the difference between the
+// strip somebody drives a machine down and the eleven-twelfths of it nobody touches.
+//
+// This is DERIVED, not stored. It could have been a byte per cell written by the generator, but
+// then every hand-edited map, every map made in the editor and every map made after today would
+// have to be regenerated to get one -- and the rule is simple enough to just run: a groomer
+// starts at the top, drives the fall line, and cannot go anywhere steep.
+//
+// Returns one byte per cell: 255 where a machine has been, 0 where nothing has, and the values
+// between are the skied-out margin at the edge of the trail, which is a real thing you can see
+// from a chairlift.
+export function pisteMask(map) {
+  const { w, h } = map.size, sp = map.spacing, H = map.heights;
+  const out = new Uint8Array(w * h);
+  const sm01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+
+  // 1. The line the machine drives. For each row across the hill, the lowest point -- but
+  //    searched only within a band of the previous row's answer, seeded at the start gate.
+  //    Taking the lowest point of the whole row instead lets the line jump to an unrelated gully
+  //    the moment the map has two of them, and on Ridge Line it left the run entirely.
+  const startGx = Math.min(w - 1, Math.max(0, Math.round(worldToGrid(map, map.start.x, 0)[0])));
+  const band = Math.max(3, Math.round(26 / sp));
+  const edge = Math.round(Math.min(10, w * 0.08));
+  const line = new Float32Array(h);
+  let prev = startGx;
+  for (let z = 0; z < h; z++) {
+    const lo = Math.max(edge, prev - band), hi = Math.min(w - 1 - edge, prev + band);
+    let bx = prev, bv = Infinity;
+    for (let x = lo; x <= hi; x++) { const v = H[z * w + x]; if (v < bv) { bv = v; bx = x; } }
+    line[z] = bx; prev = bx;
+  }
+  // A groomer drives a line, not a jitter. Forty metres of smoothing either way.
+  const R = Math.max(2, Math.round(40 / sp));
+  const smooth = new Float32Array(h);
+  for (let z = 0; z < h; z++) {
+    let acc = 0, n = 0;
+    for (let k = -R; k <= R; k++) { const j = z + k; if (j < 0 || j >= h) continue; acc += line[j]; n++; }
+    smooth[z] = acc / n;
+  }
+
+  // 2. Paint it. A freeride map gets a cat track rather than a piste -- the whole point of one is
+  //    that it is not groomed -- and the trail widens out at the bottom the way they all do.
+  const halfTop = (map.freeride ? 8 : 15) / sp;
+  const halfBot = (map.freeride ? 11 : 24) / sp;
+  const feather = 15 / sp;
+  for (let z = 0; z < h; z++) {
+    const half = halfTop + (halfBot - halfTop) * (z / Math.max(1, h - 1));
+    for (let x = 0; x < w; x++) {
+      const d = Math.abs(x - smooth[z]);
+      let v = 1 - sm01((d - half) / feather);
+      if (v <= 0) continue;
+      // Nothing grooms a steep face. Thirty degrees is about where a winch cat starts to be the
+      // only answer and forty-two is where even that stops.
+      const hx = H[z * w + Math.min(w - 1, x + 1)] - H[z * w + Math.max(0, x - 1)];
+      const hz = H[Math.min(h - 1, z + 1) * w + x] - H[Math.max(0, z - 1) * w + x];
+      const slope = Math.atan(Math.hypot(hx, hz) / (2 * sp)) * 57.2958;
+      v *= 1 - sm01((slope - 30) / 12);
+      const i = z * w + x;
+      if (v * 255 > out[i]) out[i] = Math.round(v * 255);
+    }
+  }
+
+  // 3. Under the lifts, because every resort grooms the line it has to service anyway, and the
+  //    two strips of corduroy running up the hill under a chair are half of what tells you from
+  //    the ground that the place is a resort rather than a mountain.
+  for (const L of (map.lifts || [])) {
+    const [ax, az] = worldToGrid(map, L.base.x, L.base.z);
+    const [bx, bz] = worldToGrid(map, L.top.x, L.top.z);
+    const steps = Math.ceil(Math.hypot(bx - ax, bz - az));
+    const halfC = 7 / sp, fC = 9 / sp;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / Math.max(1, steps), px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
+      const r = Math.ceil(halfC + fC);
+      for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+        const x = Math.round(px + dx), z = Math.round(pz + dz);
+        if (x < 0 || z < 0 || x >= w || z >= h) continue;
+        const d = Math.hypot(px - x, pz - z);
+        const v = (1 - sm01((d - halfC) / fC)) * 0.92;
+        const i = z * w + x;
+        if (v * 255 > out[i]) out[i] = Math.round(v * 255);
+      }
+    }
+  }
+
+  // 4. The start gate and the finish apron. Both are places people stand around in, so both are
+  //    flat, tracked out and pushed about by a machine whatever the rest of the map is doing.
+  for (const [pt, rad] of [[map.start, 26], [map.finish, 34]]) {
+    if (!pt) continue;
+    const [cx, cz] = worldToGrid(map, pt.x, pt.z);
+    const r = Math.ceil((rad + 14) / sp);
+    for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+      const x = Math.round(cx + dx), z = Math.round(cz + dz);
+      if (x < 0 || z < 0 || x >= w || z >= h) continue;
+      const d = Math.hypot(dx, dz) * sp;
+      const v = 1 - sm01((d - rad) / 14);
+      const i = z * w + x;
+      if (v * 255 > out[i]) out[i] = Math.round(v * 255);
+    }
+  }
+  return out;
+}
+
+// How wind-scoured a point is, 0 to 1: crests and steep faces lose their snow to the wind and end
+// up hard, bright and blue, and the flats and hollows below them are where it all collects. It is
+// derived from the shape rather than stored for the same reason the piste is, and it is the other
+// half of making a slope look like it has weather on it rather than a bedsheet.
+export function crustAt(curv, slopeDeg) {
+  const sm01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  return Math.min(1, sm01(curv / 0.8) * 0.75 + sm01((slopeDeg - 34) / 16) * 0.6);
+}
+
 export function lowestHeight(map) {
   const H = map.heights;
   let lo = Infinity;

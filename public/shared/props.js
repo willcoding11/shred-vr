@@ -11,24 +11,17 @@ import { variantIndex, setRailSizes } from './collide.js';
 const tmpM = new THREE.Matrix4(), tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpQ2 = new THREE.Quaternion();
 const tmpS = new THREE.Vector3(), tmpE = new THREE.Euler(), UP = new THREE.Vector3(0, 1, 0), tmpN = new THREE.Vector3();
 
-// SNOW SETTLES ON TOP OF THINGS.
-//
-// The modelled rocks come in as one flat grey all over, so a boulder sitting on a snowfield is a
-// dark blob with a hard edge against the white -- the procedural ones at least dusted their
-// up-facing faces and the modelled ones lost even that. The same goes for hut roofs, the top of a
-// fence rail, the flat of a sign and the upper branches of anything that was modelled bare.
-//
-// One dot product against world up decides it, and a brightness test keeps it off anything that
-// is already snow: without that the tree caps and the white firs get mixed toward a slightly
-// different white and go flatter, which is the opposite of the point. Four instructions in a
-// material that is already instanced, so it costs no draw calls and no extra geometry.
+// Two things the standard material will not do for props on its own, injected into its shader:
+// snow on the up-facing surfaces of everything, and -- on trees only -- needles back underneath
+// the snow the model painted over the whole canopy. See the comments inside for why each matters.
 //
 // The normal has to come from AFTER the instance matrix, because rocks, boulders and huts are
 // rotated to sit on the slope they stand on; the props group itself has no transform, so
 // instance space is world space here.
-function snowOnTop(mat, amount = 1) {
+function snowOnTop(mat, { amount = 1, canopy = 0 } = {}) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uSnowCap = { value: amount };
+    sh.uniforms.uCanopy = { value: canopy };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
       varying float vUpN;`)
@@ -41,13 +34,44 @@ function snowOnTop(mat, amount = 1) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
       varying float vUpN;
-      uniform float uSnowCap;`)
+      uniform float uSnowCap;
+      uniform float uCanopy;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 {
-  float up = smoothstep( 0.52, 0.94, vUpN );
-  float bright = max( diffuseColor.r, max( diffuseColor.g, diffuseColor.b ) );
-  float room = smoothstep( 0.62, 0.22, bright );   // already white? then it is snow, leave it
-  diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.88, 0.91, 0.97 ), up * room * uSnowCap );
+  float _mx = max( diffuseColor.r, max( diffuseColor.g, diffuseColor.b ) );
+  float _mn = min( diffuseColor.r, min( diffuseColor.g, diffuseColor.b ) );
+  // How close this texel is to being white rather than coloured. Tight, because a birch trunk is
+  // pale and beige and must not be mistaken for snow.
+  float _neutral = 1.0 - clamp( ( _mx - _mn ) * 7.0, 0.0, 1.0 );
+
+  // A SNOW-LADEN CONIFER IS A DARK MASS WITH WHITE ON TOP OF IT.
+  //
+  // Measured off the loaded meshes: 81 per cent of a tree's surface faces sideways and only 8.6
+  // per cent faces up, and on the fir every one of those side faces is painted the modeller's
+  // neutral 0.8 grey. So a stand of them is a field of white cones at very nearly the value of
+  // the snow behind it, and the frame ends up with no dark in it anywhere -- which is most of
+  // why a forest here does not read as a forest. Snow does not coat a tree; it sits on the
+  // upper side of each branch and the needles underneath stay dark.
+  //
+  // Only the modelled snow is touched, and only where the surface is not facing up.
+  if ( uCanopy > 0.0 ) {
+    float _snowy = smoothstep( 0.35, 0.70, _mx ) * _neutral;
+    // 0.55 to 0.95, so only a face that genuinely points at the sky keeps its snow. At 0.30 the
+    // ramp counted most of a tier's flank as up-facing, the two mixes multiplied out to about
+    // thirty per cent needle, and the stand stayed white. Snow on a branch is a narrow band on
+    // top of it, not a coat over the whole thing.
+    float _up = smoothstep( 0.55, 0.95, vUpN );
+    vec3 _needle = vec3( 0.035, 0.062, 0.045 );
+    diffuseColor.rgb = mix( diffuseColor.rgb, mix( _needle, diffuseColor.rgb, _up ), _snowy * uCanopy );
+  }
+
+  // SNOW SETTLES ON TOP OF THINGS. The modelled rocks come in as one flat grey all over, so a
+  // boulder on a snowfield is a dark blob with a hard edge -- the procedural ones at least dusted
+  // their up-faces. The same goes for hut roofs, the top of a fence rail and the flat of a sign.
+  float _cap = smoothstep( 0.52, 0.94, vUpN );
+  // Anything already as bright as snow IS snow; capping it again only flattens it.
+  float _room = 1.0 - smoothstep( 0.22, 0.62, _mx );
+  diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.88, 0.91, 0.97 ), _cap * _room * uSnowCap );
 }`);
   };
   mat.needsUpdate = true;
@@ -299,6 +323,11 @@ export class PropRenderer {
     this.group = new THREE.Group(); this.group.name = 'props';
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     snowOnTop(this.material);
+    // Trees get their own copy. It costs nothing -- every prop type is already its own
+    // InstancedMesh, so this is one more material, not one more draw call -- and it means the
+    // canopy rule can be aggressive without touching a hut roof or the top of a rail.
+    this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88 });
+    snowOnTop(this.treeMat, { canopy: 1.0 });
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
     this.meshes = {};
     this.items = [];
@@ -396,7 +425,11 @@ export class PropRenderer {
       else if (at > 0) geo = geos[key.slice(0, at) + (key.endsWith('@mid') ? ':mid' : ':far')];
       else if (hash > 0) geo = vars[key.slice(0, hash)][+key.slice(hash + 1)];
       else geo = geos[key];
-      m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : this.material, cap);
+      // Conifers only. A birch is a pale trunk and a few bare branches -- it carries no modelled
+      // snow for the canopy rule to take back off, and its bark is close enough to neutral that
+      // the rule would darken the trunk instead.
+      const isTree = /^(pine|fir)(#|@|$)/.test(key);
+      m = new THREE.InstancedMesh(geo, key === 'lamp' ? this.lampMat : isTree ? this.treeMat : this.material, cap);
       m.userData.cap = cap;
       // Nothing drawn until cull() has placed them. A new InstancedMesh starts at its full
       // capacity with identity matrices, which is a frame of every prop stacked at the origin --

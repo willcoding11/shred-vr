@@ -573,10 +573,14 @@ let lastGateTap = 0;
 const BOOT_AXIS = new THREE.Vector3(0, 0, 1);
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), _basis = new THREE.Matrix4();
 const preview = { angle: 0, drag: false, lastX: 0, lastY: 0, yaw: 0.6, pitch: 0.42, dist: 70 };
+// Set while shredShots() is posing the camera itself. The loop would otherwise put the preview
+// orbit back between the pose and the render, and every shot would be of the same place.
+let shotMode = false;
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, clock.getDelta());
   const now = performance.now();
+  if (shotMode) return;
   if (!map) { renderer.render(scene, camera); return; }
 
   if (inXR) stepVR(dt, now);
@@ -882,6 +886,87 @@ window.shredPerf = (points) => {
   console.table(out);
   return out;
 };
+// ---------------- screenshot review ----------------
+// THE SAME FRAME, BEFORE AND AFTER.
+//
+// Every change to the light or the snow feels like an improvement while you are making it, and
+// three of them in a row felt like improvements while the picture got worse. The only honest test
+// is the identical viewpoint rendered twice, so the viewpoints are fixed, derived from the map
+// rather than typed out per map, and the canvas is forced to one size so a shot taken today and a
+// shot taken next week are comparable.
+//
+//   npm run shots                      # the receiver, in another terminal
+//   await shredShots({ set: 'before' })                        # this map
+//   await shredShots({ set: 'before', maps: 'all' })           # every map
+//
+// Six views per map: along the run at the quarters, back up from the finish, and one from above.
+// Plus anything in SHOT_EXTRA for that map, because a map's own character is not on the fall line.
+const SHOT_EXTRA = {
+  'alpine-bowl': [
+    { name: 'gully', x: -160, z: 520, tx: -160, tz: 592 },
+    { name: 'trees', x: -306, z: 818, tx: -288, tz: 874 },
+    { name: 'village', x: 0, z: 880, tx: 0, tz: 958 },
+  ],
+};
+
+function shotViews(m) {
+  const s = m.start, f = m.finish;
+  const lerp = (t) => ({ x: s.x + (f.x - s.x) * t, z: s.z + (f.z - s.z) * t });
+  // Down the fall line, which on every map is +z, from wherever you are standing.
+  const eye = (name, t) => { const p = lerp(t); return { name, x: p.x, z: p.z, tx: p.x, tz: p.z + 70 }; };
+  const mid = lerp(0.5);
+  return [
+    eye('1-start', 0.02), eye('2-upper', 0.25), eye('3-middle', 0.5), eye('4-lower', 0.75),
+    // Looking back UP is the shot that shows what the mountain has above it, which is the half of
+    // the picture riding down it never shows you.
+    { name: '5-lookback', x: f.x, z: f.z - 24, tx: s.x, tz: s.z, eye: 1.5, aim: 30 },
+    { name: '6-wide', x: mid.x, z: mid.z - 170, tx: mid.x, tz: mid.z + 130, eye: 95, aim: 0 },
+  ].concat(SHOT_EXTRA[m.id] || []);
+}
+
+window.shredShots = async ({ set = 'latest', maps = null, port = 8099, w = 1280, h = 720 } = {}) => {
+  const list = maps === 'all' ? mapsList.map((x) => x.id) : (Array.isArray(maps) ? maps : [map.id]);
+  const keep = { map: map.id, preview: { ...preview }, ratio: settings.pixelRatio };
+  const out = [];
+  shotMode = true;
+  try {
+    // One size for every capture, whatever the window happens to be. A review that compares a
+    // 1280-wide shot against an 800-wide one is comparing the sharpening, not the change.
+    renderer.setPixelRatio(1); renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    for (const id of list) {
+      if (id !== map.id) { await loadMapById(id); await new Promise((r) => setTimeout(r, 120)); }
+      for (const v of shotViews(map)) {
+        const eyeH = v.eye ?? 1.2, aim = v.aim ?? 0.8;
+        rig.position.set(v.x, terrain.heightAt(v.x, v.z) + eyeH, v.z); rig.rotation.set(0, 0, 0);
+        camera.position.set(0, 0, 0);
+        camera.lookAt(v.tx, terrain.heightAt(v.tx, v.tz) + aim, v.tz);
+        boardGroup.visible = false; for (const b of bootMarks) b.visible = false;
+        camera.getWorldPosition(tmpV);
+        lifts?.update(0.016, tmpV);
+        terrain.update(tmpV); props.cull(tmpV, true);
+        scenery.update(0.016, tmpV, { position: tmpV });
+        renderer.render(scene, camera);
+        const name = `${map.id}-${v.name}`;
+        const body = renderer.domElement.toDataURL('image/jpeg', 0.92);
+        try {
+          await fetch(`http://localhost:${port}/save?set=${encodeURIComponent(set)}&name=${encodeURIComponent(name)}`, { method: 'POST', body });
+        } catch (e) { console.warn('is `npm run shots` running?', e.message); throw e; }
+        out.push({ shot: name, draws: renderer.info.render.calls, tris: renderer.info.render.triangles });
+      }
+    }
+  } finally {
+    shotMode = false;
+    Object.assign(preview, keep.preview);
+    settings.pixelRatio = keep.ratio; applyRenderScale();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+    if (map.id !== keep.map) await loadMapById(keep.map);
+  }
+  console.table(out);
+  return out;
+};
+
 window.shredDebug = () => ({
   quality: settings.quality, shadows: settings.shadows,
   tone: renderer.toneMapping, exposure: renderer.toneMappingExposure,

@@ -4,3 +4,4 @@ server/certs/
 
 # the editor keeps deleted maps here; it is a recycle bin, not source
 maps/.trash/
+renders/shots/

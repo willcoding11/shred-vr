@@ -132,7 +132,15 @@ export class Terrain {
     // Measured from the tile's NEAR EDGE, so a 144 m tile qualifies for full detail while its
     // centre is still 142 m away -- which is why these look closer than they play. At [90,...]
     // twenty-one tiles sat at full detail and that alone was 97,000 triangles.
-    this.LOD_D = lod ? [40, 200, 430] : [Infinity, Infinity, Infinity];
+    // [70, 300, 600], not [40, 200, 430]. These were tuned against the SILHOUETTE, and against
+    // the silhouette they were right -- a tile 200 m away does not need its shape at full
+    // resolution. But everything that makes the ground readable now lives in the vertex colours:
+    // the sun march, the curvature relief, the ambient occlusion, the snow-state mask and the
+    // shadows the trees throw. Decimating a tile does not soften those, it deletes them, and at
+    // stride 8 on a 3 m grid there is one sample every 24 m -- which is why a forest's shadow
+    // stopped existing at exactly the distance the hill looked emptiest. Measured on Alpine Bowl
+    // over all nine viewpoints: 8,300 triangles at the worst of them, about four per cent.
+    this.LOD_D = lod ? [70, 300, 600] : [Infinity, Infinity, Infinity];
     this.drawDistance = lod ? 1500 : Infinity;
     this.detail = 1;                        // multiplier on those distances; see setDetail()
     this.chunks = [];
@@ -352,6 +360,92 @@ export class Terrain {
         this.bake[i] = 1 - blocked;
       }
     }
+    // AND THE PROPS CAST SHADOWS, which past the shadow map's box nothing did.
+    //
+    // The real-time shadow map is a 140 m square around the rider. Beyond it, a forest of four
+    // hundred trees on an eight-hundred-metre slope put nothing at all on the snow, so the whole
+    // middle distance of every wide shot was one unmodulated white -- the trees read as stickers
+    // and the ground under them had no shape. In a low winter sun a tree lays down a shadow two
+    // or three times its own height, and those long blue streaks raking across a slope are most
+    // of what makes a snowfield legible at all.
+    //
+    // Free at runtime: it is the same vertex colours the sun march already writes. Accumulated by
+    // maximum rather than multiplied, because a dense stand would otherwise stack twenty
+    // overlapping stamps and go black.
+    const sd = this.sunDir;
+    if (sd && sd.y > 0.05) {
+      const hz = Math.hypot(sd.x, sd.z) || 1e-6;
+      const ux = sd.x / hz, uz = sd.z / hz;
+      const cot = hz / sd.y;                       // metres of shadow per metre of height
+      const shad = new Float32Array(n);
+      const stand = new Float32Array(n);
+      // Only things with enough of themselves above the snow to throw one. A flag on a stick does
+      // not, and paying for it in cells at this resolution would only smudge the piste.
+      const CASTS = { pine: 1, fir: 1, birch: 0.7, rock: 0.8, boulder: 1, hut: 1, fence: 0.5 };
+      for (const pr of this.map.props) {
+        const k = CASTS[pr.t]; if (!k) continue;
+        const t = PROP_TYPES[pr.t]; if (!t || !t.ch) continue;
+        const sc = pr.s || 1;
+        // 70 m is the cap: a low enough sun to throw one further is also low enough that the hill
+        // itself is in shadow, which the march above has already said.
+        const len = Math.min(70, t.ch * sc * cot);
+        const r0 = Math.max(sp * 0.7, (t.r || 0.5) * sc * 1.1);
+        const steps = Math.max(2, Math.ceil(len / sp));
+        for (let q = 1; q <= steps; q++) {
+          const f = q / steps;
+          // Dark for most of its length and soft at the tip, the way a shadow of a thing with a
+          // ragged top is.
+          const str = 0.52 * k * (1 - Math.pow(f, 2.6));
+          if (str <= 0.002) continue;
+          const rad = r0 * (1 + f * 1.5);
+          const cxg = (pr.x + ux * len * f) / sp + (w - 1) / 2;
+          const czg = (pr.z + uz * len * f) / sp;
+          const rg = rad / sp;
+          const z0 = Math.max(0, Math.floor(czg - rg)), z1 = Math.min(h - 1, Math.ceil(czg + rg));
+          const x0 = Math.max(0, Math.floor(cxg - rg)), x1 = Math.min(w - 1, Math.ceil(cxg + rg));
+          for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+            const u = Math.hypot(x - cxg, z - czg) / rg;
+            if (u >= 1) continue;
+            const v = str * (1 - u * u);
+            const i = z * w + x;
+            if (v > shad[i]) shad[i] = v;
+          }
+        }
+      }
+      // AND A BROAD ONE PER STAND, because a sharp shadow cannot survive the decimation.
+      //
+      // The tiles drop to every fourth and then every eighth vertex past 200 and 430 m -- 24 m
+      // between samples on the big maps -- so a tree's own shadow, which is two or three cells
+      // wide, is simply not representable out there and every one of them vanished. Which is
+      // exactly the distance band that looked emptiest. A forest seen from a kilometre away is
+      // not a set of individual shadows anyway; it is a dark patch on the hill, and a wide soft
+      // disc per tree, accumulated by maximum so a stand does not stack into a hole, is what that
+      // actually looks like.
+      for (const pr of this.map.props) {
+        if (pr.t !== 'pine' && pr.t !== 'fir') continue;
+        const t = PROP_TYPES[pr.t]; if (!t) continue;
+        // 30 m of radius is not a stylistic choice, it is the decimation: at stride 8 on a 3 m
+        // grid the tiles out here carry one vertex every 24 m, so anything narrower than that
+        // falls between the samples and disappears entirely -- which is what happened to the
+        // first attempt at 16 m.
+        const len = Math.min(70, t.ch * (pr.s || 1) * cot);
+        const rad = Math.max(30, len * 0.7), rg = rad / sp;
+        const cxg = (pr.x + ux * len * 0.40) / sp + (w - 1) / 2;
+        const czg = (pr.z + uz * len * 0.40) / sp;
+        const z0 = Math.max(0, Math.floor(czg - rg)), z1 = Math.min(h - 1, Math.ceil(czg + rg));
+        const x0 = Math.max(0, Math.floor(cxg - rg)), x1 = Math.min(w - 1, Math.ceil(cxg + rg));
+        for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+          const u = Math.hypot(x - cxg, z - czg) / rg;
+          if (u >= 1) continue;
+          // Added and then capped, not maximised: a thick stand should be darker under it than
+          // three trees on their own, which is the difference between a forest and a scatter.
+          const i = z * w + x;
+          stand[i] = Math.min(0.34, stand[i] + 0.085 * (1 - u * u));
+        }
+      }
+      for (let i = 0; i < n; i++) { const v = Math.max(shad[i], stand[i]); if (v > 0) this.bake[i] *= 1 - v; }
+    }
+
     // Contact shading wherever something stands in the snow. A tree with no darkening where it
     // meets the ground reads as a sticker on the slope, and this was the last thing in the scene
     // with no occlusion of any kind. Free at runtime: it is the same vertex colours.
@@ -532,10 +626,17 @@ export class Terrain {
       // Baked sun. Snow out of the sun is not merely darker, it is BLUE -- it is lit by the sky
       // dome instead -- so the channels come down by different amounts. Flat darkening here
       // made the shadowed ground look grey and dirty.
+      // 0.62 / 0.52 / 0.30, not 0.44 / 0.35 / 0.19. Snow out of the sun keeps only what the sky
+      // dome gives it, which is well under half of what it had -- and because this multiplies the
+      // albedo rather than removing a light, it is fighting a hemisphere and an environment map
+      // that go on lighting the shadow at full strength whatever it says. At the old numbers a
+      // tree's shadow came out about four per cent darker on screen once the tone curve had had
+      // it, which is to say it was not there. The channels still come down by different amounts,
+      // because snow out of the sun is not grey, it is blue.
       const lit = this.bake ? this.bake[g] : 1;
       if (lit < 0.999) {
-        const k = (1 - lit) * (this.quality === 'real' ? 1 : 0.8);
-        _c.r *= 1 - k * 0.44; _c.g *= 1 - k * 0.35; _c.b *= 1 - k * 0.19;
+        const k = (1 - lit) * (this.quality === 'real' ? 1 : 0.85);
+        _c.r *= 1 - k * 0.62; _c.g *= 1 - k * 0.52; _c.b *= 1 - k * 0.30;
       }
     }
     col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b;

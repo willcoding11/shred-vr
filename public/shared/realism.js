@@ -105,20 +105,53 @@ void main(){
 }`;
 
 // ---------------------------------------------------------------- snow
+// Value noise on a lattice that WRAPS.
+//
+// This map repeats every 1.33 m on the ground, and a noise that does not tile puts a seam there
+// that you cannot stop seeing once you have seen it. Wrapping the lattice indices at the octave's
+// own period makes the result exactly periodic, so every octave tiles and so does their sum.
+function tiling(size, cellsX, cellsY, seed) {
+  const out = new Float32Array(size * size);
+  const hash = (ix, iy) => {
+    const x = ((ix % cellsX) + cellsX) % cellsX, y = ((iy % cellsY) + cellsY) % cellsY;
+    return ((Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453) % 1 + 1) % 1;
+  };
+  const sm = (t) => t * t * (3 - 2 * t);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const fx = (x / size) * cellsX, fy = (y / size) * cellsY;
+    const ix = Math.floor(fx), iy = Math.floor(fy);
+    const tx = sm(fx - ix), ty = sm(fy - iy);
+    const a = hash(ix, iy), b = hash(ix + 1, iy), c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
+    const top = a + (b - a) * tx, bot = c + (d - c) * tx;
+    out[y * size + x] = top + (bot - top) * ty;
+  }
+  return out;
+}
+
 // A micro-relief normal map. Snow is never geometrically flat: it has wind texture, the tracks of
 // everything that has been over it, and crystal facets, and at a grazing sun all of that is what
 // you are actually looking at.
+//
+// IT IS NOT A SINE WAVE AND IT IS NOT STATIC. The old one was one ripple at one frequency plus
+// Math.random() per texel, and both halves were wrong in the same way. The ripple gave the whole
+// slope a single regular corrugation, and the per-texel random gave every texel an unrelated
+// normal, which under a specular term is white speckle over the entire hill -- visible in any
+// wide shot as a fizz that does not belong to anything. Neither is what snow does.
+//
+// What snow does is ANISOTROPIC. Wind lays it in long low lines, and the direction of those lines
+// is the most legible thing on an untouched slope under a grazing sun, which is why the octaves
+// below are six cells across and twenty-two down rather than square.
 export function snowNormalMap(size = 512) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const g = c.getContext('2d');
   const img = g.createImageData(size, size), d = img.data;
   const hgt = new Float32Array(size * size);
   const h = (x, y) => hgt[((y + size) % size) * size + ((x + size) % size)];
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    // wind ripple along one axis, plus fine grain
-    const ripple = Math.sin(y * 0.22 + Math.sin(x * 0.03) * 2.2) * 0.5;
-    const grain = (Math.sin(x * 2.1 + y * 1.3) + Math.sin(x * 0.7 - y * 3.1)) * 0.18;
-    hgt[y * size + x] = ripple + grain + Math.random() * 0.5;
+  //          across, along, amplitude, seed
+  const OCT = [[6, 22, 1.00, 1], [12, 40, 0.46, 2], [26, 74, 0.22, 3], [60, 108, 0.11, 4]];
+  for (const [cx, cy, amp, seed] of OCT) {
+    const n = tiling(size, cx, cy, seed);
+    for (let i = 0; i < hgt.length; i++) hgt[i] += n[i] * amp;
   }
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const dx = h(x + 1, y) - h(x - 1, y), dy = h(x, y + 1) - h(x, y - 1);
@@ -223,9 +256,9 @@ float rhash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 4
     vec3 facet = normalize(N + (vec3(r1, r2, r3) - 0.5) * 1.9);
     vec3 H = normalize(uSunDir + V);
     float spec = pow(max(dot(facet, H), 0.0), 130.0);
-    float rare = step(0.72, r3);
+    float rare = step(0.86, r3);   // one cell in seven, not one in four
     float grazing = smoothstep(0.0, 0.35, dot(N, uSunDir));
-    reflectedLight.directSpecular += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * near * 5.5;
+    reflectedLight.directSpecular += vec3(1.0, 0.99, 0.96) * spec * rare * grazing * uSparkle * near * 7.5;
   }
 }`)
       // AERIAL PERSPECTIVE. White fog on white snow does nothing, which is why a ridge 800 m away

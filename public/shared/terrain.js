@@ -28,11 +28,17 @@ export function makeSnowTexture(size = 512) {
     // these maps is the fall line, so putting the stripes on x makes them lines of constant x --
     // running downslope, the way a groomer actually drives and the way a rider reads the pitch
     // in front of them. Across the hill they told you where you were, not where you were going.
-    const stripe = Math.sin((x / size) * Math.PI * 2 * 60) * 24;  // ~13 cm grooves on an 8 m tile
+    // WIDER AND QUIETER. 60 stripes on an 8 m tile is a 13 cm groove, which is narrower than a
+    // real groomer's tiller leaves and -- far worse -- lands at a few pixels wherever the slope
+    // recedes, so the whole middle distance of every downhill shot was an interference pattern
+    // rather than snow. 40 stripes is 20 cm, which is what the machine actually cuts, and at less
+    // than half the contrast it reads as texture instead of as the loudest thing in the frame.
+    // It also stops mattering nearly as much once the snow-state mask keeps it on the piste.
+    const stripe = Math.sin((x / size) * Math.PI * 2 * 40) * 10;  // ~20 cm grooves on an 8 m tile
     // and a coarser band across them, because one frequency at one angle reads as machined cloth
-    const coarse = Math.sin((x / size) * Math.PI * 2 * 7 + Math.sin((y / size) * 6.0) * 0.8) * 9;
+    const coarse = Math.sin((x / size) * Math.PI * 2 * 7 + Math.sin((y / size) * 6.0) * 0.8) * 5;
     const drift = Math.sin((y / size) * Math.PI * 2 * 3 + (x / size) * 5.1) * 6;
-    const n = (Math.random() - 0.5) * 9;
+    const n = (Math.random() - 0.5) * 6;
     const v = 238 + stripe + coarse + drift + n;
     d[i] = Math.max(0, v - 6); d[i + 1] = Math.max(0, v - 1); d[i + 2] = Math.min(255, v + 7); d[i + 3] = 255;
   }
@@ -79,10 +85,18 @@ export class Terrain {
     });
     if (quality === 'real') {
       // Micro-relief and the two things a standard material cannot do for snow on its own.
+      // 2.2 REPEATS, NOT 6, and a scale that can be seen.
+      //
+      // At repeat 6 this map tiled every 1.33 m on the ground, which put every feature in it
+      // between one and six centimetres across -- below a pixel by ten metres out, so the
+      // mipmap chain averaged the whole thing to flat and the slope had no micro-relief at any
+      // distance a rider actually looks. Sweeping the repeat from 6 to 1 and the scale from 0
+      // to 12 moved the measured contrast of the near field by less than one level out of 255
+      // until the scale went past 4, which is not subtlety, it is absence.
       const nm = snowNormalMap(512);
-      nm.repeat.set(6, 6);
+      nm.repeat.set(2.2, 2.2);          // one tile every 3.6 m: wind lineation at 30-60 cm
       this.material.normalMap = nm;
-      this.material.normalScale = new THREE.Vector2(0.55, 0.55);
+      this.material.normalScale = new THREE.Vector2(1.3, 1.3);
       patchSnowMaterial(this.material, { sparkle: 1, subsurface: 1 });
     }
     // ONE MESH PER TILE, not one mesh for the mountain.
@@ -560,7 +574,13 @@ function snowColor(slopeDeg, x, z, snowType, relief, out) {
   // Relief: hollows darker AND bluer, crests brighter and a touch warmer. Snow in shadow is
   // strongly blue in life, and leaning on that colour shift rather than brightness alone keeps
   // the hill readable without making it look grey and dirty.
-  const lift = 1 + relief * 0.26;
+  // 0.38, not 0.26. Measured rather than argued: the standard deviation of the luminance over the
+  // snow in front of the rider was 4.5 out of 255 -- the whole near field of every shot sat inside
+  // two histogram buckets, which is what "it looks empty" actually IS. Micro-normals cannot fix
+  // that (they mip away to nothing by ten metres out) and exposure only moves where the flatness
+  // sits. Curvature shading is per-vertex, so it survives every level of detail and every
+  // distance, and it is the only lever in the near field that does.
+  const lift = 1 + relief * 0.38;
   const cool = Math.max(0, -relief);
   r *= lift * (1 - cool * 0.10);
   g *= lift * (1 - cool * 0.045);

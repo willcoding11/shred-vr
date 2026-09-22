@@ -31,7 +31,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * settings.pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.88;
 renderer.shadowMap.enabled = settings.shadows; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
@@ -447,7 +447,12 @@ function applyQuality() {
   // it was the brightness turned up: it blew the piste to featureless white and the Fast image
   // had more tonal shape in the snow than the Real one did.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = real ? 1.0 : 0.95;
+  // 0.88 on both. Snow was landing at a mean of 220 out of 255 with a spread of four, which is
+  // the top of the ACES shoulder: every difference the lighting produced was being compressed
+  // into nothing by the tone curve on its way to the screen. A third of a stop down puts the lit
+  // snow at about 200 -- still plainly the brightest thing in the frame, still reading as white,
+  // but now on the part of the curve that has room to show a shaded side.
+  renderer.toneMappingExposure = 0.88;
   scenery.setQuality(settings.quality);
   if (terrain) {
     scene.remove(terrain.mesh); terrain.dispose();

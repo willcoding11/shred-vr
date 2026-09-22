@@ -164,7 +164,13 @@ export class Scenery {
     const zen = new THREE.Color().setHSL(0.6, 0.62, 0.42 + Math.sin(t * Math.PI) * 0.16);
     const hor = new THREE.Color().lerpColors(new THREE.Color(0xffc9a3), new THREE.Color(0xe3eef9), Math.min(1, Math.sin(t * Math.PI) * 1.6));
     this.skyUniforms.zenith.value.copy(zen); this.skyUniforms.horizon.value.copy(hor);
-    this.hemi.intensity = 0.45 + Math.sin(t * Math.PI) * 0.35;
+    // FILL, NOT A SECOND SUN. At 0.45 to 0.80 the hemisphere was lifting the shaded side of
+    // every roller, gully wall and tree back to nearly the lit value, and a slope with no shaded
+    // side is exactly the white bedsheet the mountain was reading as. Snow in shade is darker AND
+    // bluer, and on Real the sky cubemap is already doing the blue properly, so the hemisphere
+    // only has to fill what the cubemap misses. Fast has no cubemap and keeps more of it.
+    const fill = this.quality === 'real' ? 0.20 : 0.34;
+    this.hemi.intensity = fill + Math.sin(t * Math.PI) * fill * 0.55;
     const f = this.env.fog ?? 0.35;
     this.scene.fog.color.copy(hor).lerp(new THREE.Color(0xffffff), 0.3);
     // Aerial perspective, not a white-out. Starting the haze at 100 m made a kilometre-wide

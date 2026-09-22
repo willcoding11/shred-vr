@@ -85,9 +85,10 @@ export class Scenery {
   // playable ground stops. Called whenever a map is loaded or its shape settles.
   setGround(map) {
     if (!this.mountains || !map) return;
+    this._map = map;
     this.scene.remove(this.mountains);
     this.mountains.geometry.dispose();
-    this.mountains = makeMountains(map);
+    this.mountains = makeMountains(map, this.sunDir, this.env.fog ?? 0.35, this.scene.fog?.color);
     this.scene.add(this.mountains);
   }
 
@@ -185,7 +186,13 @@ export class Scenery {
   // Keep the shadow frustum and the sky centred on the viewer.
   update(dt, viewerPos, camera) {
     this.skyUniforms.time.value += dt;
-    if (this._envDirty) { this._envDirty = false; this.buildEnvironment(); }
+    if (this._envDirty) {
+      this._envDirty = false;
+      this.buildEnvironment();
+      // The range carries its sun in its vertex colours, so moving the sun means rebuilding it.
+      // Five thousand vertices, once, when the time of day is dragged in the editor.
+      if (this._map) this.setGround(this._map);
+    }
     this.sunTarget.position.copy(viewerPos);
     this.sun.position.copy(viewerPos).addScaledVector(this.sunDir, 220);
     this.sky.position.copy(camera.position);
@@ -195,7 +202,9 @@ export class Scenery {
   }
 }
 
-const _HAZE = new THREE.Color(0.58, 0.67, 0.83);
+// The radiance the horizon haze arrives at, which is what a ridge four kilometres out fades
+// into. Not an albedo -- nothing lights this.
+const _HAZE_RAD = [0.62, 0.70, 0.86];
 
 // Ridged noise: fbm folded about zero and sharpened, which is what turns rounded hills into
 // aretes. Real ridgelines are creases where two faces meet, and ordinary fbm cannot make a crease.
@@ -231,16 +240,60 @@ function ridged(x, z, oct = 4) {
 // outward: dense where you can see detail, coarse where you cannot.
 //
 // 7,000 triangles in one draw call, against 2,600 for the strip plus a disc in two.
-function makeMountains(map) {
-  const S = 256, K = 18, RMAX = 3200;
+function makeMountains(map, sunDir = null, fogAmt = 0.35, fogColor = null) {
+  // 4200 and not further: the map's half-diagonal is about 720 m, so the furthest any camera
+  // can be from the outermost shell is 4920 -- just inside the 5000 m far plane, which is as
+  // far as it can go without widening the depth range and costing precision on the board.
+  const S = 256, K = 18, RMAX = 4200;
   // With no map yet (the editor builds Scenery before it loads one) stand in with a square
   // kilometre; setGround rebuilds this the moment a real one arrives.
   const a = map ? ((map.size.w - 1) * map.spacing) / 2 : 500;
   const b = map ? ((map.size.h - 1) * map.spacing) / 2 : 500;
   const cz = b;
   const pos = [], col = [], idx = [];
-  const c = new THREE.Color();
   const sm = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+
+  // The whole range as a function, so it can be asked about points that are not vertices -- which
+  // is what casting a shadow across it needs.
+  const height = (x, z, r0, eh) => {
+    const d = Math.max(0, Math.hypot(x, z - cz) - r0);
+    const floor = eh - 22 - 70 * sm(d / 900);
+    const grow = Math.pow(sm(d / 2600), 1.25);
+    // The floor climbs too, not only the peaks. With a flat base the low ground between the
+    // ridges stayed at one height for three kilometres, and from sixty metres up that is a plane
+    // seen almost edge-on: it compressed into a pale band across the middle of every wide shot,
+    // with its own undulations poking through as dark slivers that read as debris in the sky.
+    return floor + 300 * grow + ridged(x * 0.00040 + 40, z * 0.00040 + 11) * (820 * grow);
+  };
+  // The inner radius and the map's edge height in a given direction, which is all `height` needs
+  // to be evaluated anywhere rather than only on the shells.
+  const at = (x, z) => {
+    const th = Math.atan2(z - cz, x);
+    const ct = Math.cos(th), st = Math.sin(th);
+    const r0 = Math.min(Math.abs(a / (Math.abs(ct) < 1e-4 ? 1e-4 : ct)),
+                        Math.abs(b / (Math.abs(st) < 1e-4 ? 1e-4 : st)));
+    return [r0, map ? heightAt(map, ct * r0 * 0.995, cz + st * r0 * 0.995) : 0];
+  };
+
+  // A RANGE WITH NO SHADOW ON IT IS A CUT-OUT. Lighting alone gives every face its own tone, but
+  // what makes a real skyline read as solid is one ridge throwing shade across the next -- the
+  // light side and the dark side of the same massif. Marched here and baked into the vertex
+  // colours, so it costs nothing per frame and nothing in the shadow map, which at this distance
+  // could never have covered it anyway.
+  const sunLit = (x, y, z) => {
+    if (!sunDir || sunDir.y <= 0.02) return 1;
+    const step = 190, n = 11;
+    let shade = 0;
+    for (let i = 1; i <= n; i++) {
+      const t = i * step;
+      const px = x + sunDir.x * t, pz = z + sunDir.z * t;
+      const ray = y + sunDir.y * t;
+      const [r0, eh] = at(px, pz);
+      const h = height(px, pz, r0, eh);
+      if (h > ray) shade = Math.max(shade, Math.min(1, (h - ray) / 120));
+    }
+    return 1 - shade * 0.82;
+  };
 
   for (let k = 0; k <= K; k++) {
     // Growth, not even spacing: the first shells are metres apart and the last are hundreds, so
@@ -262,14 +315,42 @@ function makeMountains(map) {
       // ground is. Sampled a hair inside so it is a real reading rather than a clamp.
       const eh = map ? heightAt(map, ct * r0 * 0.995, cz + st * r0 * 0.995) : 0;
       const d = r - r0;
-      // Down into a valley first, and only then up. A mountain you are standing on is higher than
-      // what is immediately around it, and skipping that step is what made the old ring look like
-      // a wall around a garden.
-      const floor = eh - 58 - 210 * sm(d / 520);
-      const grow = Math.pow(sm(d / 1700), 1.15);
-      const y = floor + ridged(x * 0.00040 + 40, z * 0.00040 + 11) * (980 * grow);
+      // Down into a valley first, and only then up, because a mountain you are standing on is
+      // higher than what is immediately around it -- skipping that step is what made the old ring
+      // look like a wall around a garden.
+      //
+      // BUT SHALLOW. The first try dug 268 m of trench starting at the map boundary and put a
+      // 980 m peak at only 1.7 km, which from a metre off the snow means you look straight ACROSS
+      // the trench: the connecting ground is below the sight line, so the range rose out of
+      // nothing with sky underneath it and hung off the top of the frame. A 92 m fall over 900 m
+      // stays in view the whole way, and the peaks are further out and lower, so the ground runs
+      // unbroken from your feet to the skyline the way it does in every photograph of a mountain.
+      const floor = eh - 22 - 70 * sm(d / 900);
+      const grow = Math.pow(sm(d / 2600), 1.25);
+      // The floor climbs too, not only the peaks. With a flat base the low ground between the
+      // ridges stayed at one height for three kilometres, and from sixty metres up that is a
+      // plane seen almost edge-on: it compressed into a pale band across the middle of every
+      // wide shot, with its own small undulations poking through as dark slivers that read as
+      // debris floating in the sky. Ground that rises the whole way out is a massif rather than
+      // peaks standing on a plain, and there is no near-edge-on surface left to alias.
+      const y = height(x, z, r0, eh);
       pos.push(x, y, z);
       col.push(0, 0, 0);      // filled once the normals exist
+    }
+  }
+  // NO OVERHANGS. The shells grow outward, so the outermost quads are four hundred metres deep
+  // by a hundred wide, and ridged noise across a gap that long can drop faster than the quad is
+  // wide -- which draws as a near-vertical sliver seen edge-on, the dark splinters that were
+  // lying across the range. Walking outward and limiting how fast the ground may fall or climb
+  // between shells removes them without touching the silhouette.
+  for (let i = 0; i <= S; i++) {
+    for (let k = 1; k <= K; k++) {
+      const a = (k - 1) * (S + 1) + i, b = k * (S + 1) + i;
+      const dr = Math.hypot(pos[b * 3] - pos[a * 3], pos[b * 3 + 2] - pos[a * 3 + 2]);
+      const dy = pos[b * 3 + 1] - pos[a * 3 + 1];
+      const lim = dr * 1.1;
+      if (dy > lim) pos[b * 3 + 1] = pos[a * 3 + 1] + lim;
+      else if (dy < -lim) pos[b * 3 + 1] = pos[a * 3 + 1] - lim;
     }
   }
   for (let k = 0; k < K; k++) for (let i = 0; i < S; i++) {
@@ -281,39 +362,74 @@ function makeMountains(map) {
   g.setIndex(idx);
   g.computeVertexNormals();          // smooth, not flat: a 3 km ridge is not made of facets
 
-  // Colour after the normals, because what is rock and what is snow is a question about slope.
+  // LIT HERE, NOT BY THE RENDERER.
+  //
+  // This was a MeshStandardMaterial with the aerial perspective mixed into its vertex colours,
+  // which is the wrong way round and quietly undid the whole effect: haze is something that
+  // happens to light on its way to your eye, so folding it into the ALBEDO means the renderer
+  // then multiplies the haze by the lighting -- a ridge in shadow got dark haze, a ridge in sun
+  // got bright haze, and the distance cue cancelled itself out. Every shadow marched into these
+  // vertices came out compressed to nothing for the same reason.
+  //
+  // So the sun, the sky and the shadow are resolved here, into radiance, and the material is
+  // unlit. It is more control, not less: the range is a backdrop three to four kilometres away
+  // and nothing about it needs to respond to anything at runtime. It is also cheaper -- no
+  // lighting, no normals in the shader, one flat pass over 9,200 triangles.
   const nrm = g.attributes.normal;
   const lowest = map ? lowestOf(map) : -200;
+  const SKY = [0.17, 0.20, 0.27];     // the blue dome, which is all a shaded face gets
+  const HAZE_MAX = Math.min(0.94, 0.22 + fogAmt * 0.85);
+  // Into the weather's own colour, or the range fades toward a blue that the near ground is not
+  // fading toward and the two disagree about what the air is doing.
+  const HAZE = fogColor ? [fogColor.r, fogColor.g, fogColor.b] : _HAZE_RAD;
   for (let v = 0; v < pos.length / 3; v++) {
     const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
-    const slope = Math.acos(Math.min(1, Math.max(-1, nrm.getY(v)))) * 57.2958;
-    // Snow above the line and off the steep faces -- the same rule the playable hill uses, so
-    // the far country and the near ground agree about what a mountain is made of.
-    // A snow line, and it has to be high enough that there is rock under it. Everything white
-    // is the same failure as everything groomed: no contrast, no distance, no mountain.
-    const high = sm((y - (lowest + 40)) / 460);
-    const snowy = high * (1 - sm((slope - 33) / 20));
+    const nx = nrm.getX(v), ny = nrm.getY(v), nz = nrm.getZ(v);
+    const slope = Math.acos(Math.min(1, Math.max(-1, ny))) * 57.2958;
+    // ROCK IN BANDS, not by slope alone. Smooth-shaded ridged noise almost never exceeds a 33
+    // degree threshold, so a slope rule alone resolved nearly the whole range to snow and four
+    // kilometres of mountain came out one flat pale grey -- the same failure as corduroy
+    // everywhere: no contrast, no distance, no mountain. A second noise field at about 600 m
+    // picks out the faces that are scoured and broken, and the steep parts join in.
+    const high = sm((y - (lowest + 260)) / 520);
+    const band = sm((ridged(x * 0.0016 + 7, z * 0.0016 + 3, 3) - 0.38) / 0.22);
+    const snowy = high * (1 - Math.min(1, band + sm((slope - 28) / 18)));
     const rock = 1 - snowy;
-    const shade = 0.30 + 0.13 * (((Math.sin(x * 0.021 + z * 0.013) * 4375.5) % 1 + 1) % 1);
-    c.setRGB(shade * 1.05 * rock + 0.93 * snowy, shade * rock + 0.95 * snowy, shade * 0.98 * rock + 1.0 * snowy);
-    // Aerial perspective, and it has to be strong. Contrast falling off with distance is the
-    // single cue that tells you a ridge is four kilometres away rather than four hundred metres.
+    // Warmer and darker than the haze it sits in, or it dissolves into its own aerial perspective.
+    const shade = 0.15 + 0.10 * (((Math.sin(x * 0.021 + z * 0.013) * 4375.5) % 1 + 1) % 1);
+    const alb = [
+      shade * 1.14 * rock + 0.94 * snowy,
+      shade * 1.00 * rock + 0.96 * snowy,
+      shade * 0.88 * rock + 1.00 * snowy,
+    ];
+    // WRAPPED, not clamped. A true Lambert term takes every face that is turned away from the sun
+    // to exactly zero, and on a backlit range that is every face you can see -- which is how the
+    // whole thing came out as one flat grey silhouette with all the shadow marching in it
+    // invisible. Wrapping the term keeps the gradation across faces that are all, strictly, in
+    // shade, which is also closer to what a big hazy airmass actually does to light.
+    const raw = sunDir ? nx * sunDir.x + ny * sunDir.y + nz * sunDir.z : 0.2;
+    const ndl = Math.max(0, (raw + 0.35) / 1.35);
+    const lit = sunLit(x, y, z);
+    const sun = 0.92 * ndl * lit;
+    const skyView = 0.55 + 0.45 * Math.max(0, ny);   // a face looking up sees more of the dome
     const d = Math.hypot(x, z - cz);
-    // Capped well short of one: a ridge that reaches the sky's own value is a ridge you
-    // cannot see, and the sky is nearly white at the horizon.
-    c.lerp(_HAZE, Math.min(0.62, sm((d - 400) / 2400) * 0.68));
-    col[v * 3] = c.r; col[v * 3 + 1] = c.g; col[v * 3 + 2] = c.b;
+    // Aerial perspective, applied to the light rather than to the paint, and capped well short of
+    // the sky's own value: a ridge that reaches it is a ridge you cannot see.
+    // Enough to say "far away", not enough to erase what is out there -- and tied to the map's own
+    // weather, because this mesh is deliberately not fogged by the scene and on the storm map that
+    // meant a crisp skyline four kilometres away behind a hundred metres of white-out. The number
+    // it reaches on a clear day is deliberately low: alpine air is very clear, and at two thirds
+    // haze every difference between rock and snow and between a lit face and a shaded one was
+    // compressed into a grey band, which is the cut-out this was built to stop.
+    const h = Math.min(HAZE_MAX, sm((d - 700) / 3000) * (HAZE_MAX * 1.15));
+    for (let k = 0; k < 3; k++) {
+      const rad = alb[k] * (sun + SKY[k] * skyView);
+      col[v * 3 + k] = rad * (1 - h) + HAZE[k] * h;
+    }
   }
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
 
-  // NOT FOGGED BY THE SCENE. The scene's fog reaches white by four kilometres, which is where
-  // this thing lives, so the range was arriving at very nearly the colour of the sky and what you
-  // saw was the handful of peaks that happened to poke above the haze band -- pale shards
-  // floating over a white gap, with the ridges that joined them invisible. It carries its own
-  // aerial perspective in the vertex colours instead, which is the same effect under control:
-  // strong enough that four kilometres reads as four kilometres, capped short of the sky's value
-  // so a ridge always stays a ridge.
-  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, fog: false }));
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
   m.frustumCulled = false; m.name = 'mountains';
   m.userData.baseY = 0; m.userData.pinned = false;
   return m;

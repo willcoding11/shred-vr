@@ -221,7 +221,13 @@ export function patchSnowMaterial(mat, { sparkle = 1, subsurface = 1, aerial = 1
       .replace('#include <map_fragment>', `#include <map_fragment>
       #ifdef USE_MAP
         vec3 _base = uSnowBase * diffuse;
-        diffuseColor.rgb = _base + ( diffuseColor.rgb - _base ) * mix( 0.14, 1.0, vSnow.x );
+        // Faded out with distance as well as off the piste. A 20 cm groove is a few pixels wide by
+        // sixty metres out and a fraction of one past that, which is an interference pattern
+        // rather than a texture -- and in stereo at 72 Hz a shimmering one is not a look, it is a
+        // reason to take the headset off. Anisotropic filtering cannot save a pattern this
+        // regular at this angle; not drawing it out there can.
+        float _far = 1.0 - smoothstep( 45.0, 150.0, length( vViewPosition ) );
+        diffuseColor.rgb = _base + ( diffuseColor.rgb - _base ) * mix( 0.14, 1.0, vSnow.x * _far );
       #endif
       `)
       // TWO SCALES OF NORMAL. The map repeated once every 1.33 m and that single frequency was

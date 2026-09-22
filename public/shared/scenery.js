@@ -180,7 +180,12 @@ export class Scenery {
     const fill = this.quality === 'real' ? 0.20 : 0.34;
     this.hemi.intensity = fill + Math.sin(t * Math.PI) * fill * 0.55;
     const f = this.env.fog ?? 0.35;
-    this.scene.fog.color.copy(hor).lerp(new THREE.Color(0xffffff), 0.3);
+    // COOLER AND DARKER THAN THE SKY ABOVE IT. Taking the sky's own horizon value and pushing it
+    // toward white gave a fog the same colour as the brightest part of the sky, so a ridge fading
+    // into the distance also faded into the sky and the terrain lost its silhouette -- the left
+    // ridge of Cornice dissolved halfway along itself. Real distance haze is bright but it is
+    // still darker than what is behind it, which is what lets a skyline stay a skyline.
+    this.scene.fog.color.copy(hor).lerp(new THREE.Color(0xa8bcd4), 0.42).multiplyScalar(0.94);
     // Aerial perspective, not a white-out. Starting the haze at 100 m made a kilometre-wide
     // mountain fade to nothing barely past the trees in front of you, which reads as fog rolling
     // in rather than as distance. Real mountain air is very clear; you want the far peaks
@@ -275,13 +280,18 @@ function makeMountains(map, sunDir = null, fogAmt = 0.35, fogColor = null) {
   // is what casting a shadow across it needs.
   const height = (x, z, r0, eh) => {
     const d = Math.max(0, Math.hypot(x, z - cz) - r0);
-    const floor = eh - 22 - 70 * sm(d / 900);
-    const grow = Math.pow(sm(d / 2600), 1.25);
-    // The floor climbs too, not only the peaks. With a flat base the low ground between the
-    // ridges stayed at one height for three kilometres, and from sixty metres up that is a plane
-    // seen almost edge-on: it compressed into a pale band across the middle of every wide shot,
-    // with its own undulations poking through as dark slivers that read as debris in the sky.
-    return floor + 300 * grow + ridged(x * 0.00040 + 40, z * 0.00040 + 11) * (820 * grow);
+    // NO TROUGH. This used to drop 92 m below the map's edge over the first 900 m and only then
+    // climb, and from a metre off the snow that is fatal: the map's own convex horizon hides the
+    // dip, so the base of the range is occluded and only its top band survives -- a grey ribbon
+    // hanging in the sky with the tops of the intermediate shells poking out below it like birds.
+    // The ground has to leave the map's edge and keep going UP, so that what you see is one
+    // continuous surface from your feet to the skyline, the way it is in every photograph.
+    const floor = eh - 18 + 55 * sm(d / 700);
+    // And the relief starts sooner and reaches less far. 1120 m of it beginning at 2.6 km put the
+    // peaks so high and so distant that they cleared the near horizon by more than the frame is
+    // tall; 590 m from 1.4 km sits them where a range actually sits.
+    const grow = Math.pow(sm(d / 1400), 1.2);
+    return floor + 165 * grow + ridged(x * 0.00040 + 40, z * 0.00040 + 11) * (430 * grow);
   };
   // The inner radius and the map's edge height in a given direction, which is all `height` needs
   // to be evaluated anywhere rather than only on the shells.
@@ -396,7 +406,7 @@ function makeMountains(map, sunDir = null, fogAmt = 0.35, fogColor = null) {
   const nrm = g.attributes.normal;
   const lowest = map ? lowestOf(map) : -200;
   const SKY = [0.17, 0.20, 0.27];     // the blue dome, which is all a shaded face gets
-  const HAZE_MAX = Math.min(0.94, 0.22 + fogAmt * 0.85);
+  const HAZE_MAX = Math.min(0.94, 0.30 + fogAmt * 0.90);
   // Into the weather's own colour, or the range fades toward a blue that the near ground is not
   // fading toward and the two disagree about what the air is doing.
   const HAZE = fogColor ? [fogColor.r, fogColor.g, fogColor.b] : _HAZE_RAD;
@@ -409,10 +419,21 @@ function makeMountains(map, sunDir = null, fogAmt = 0.35, fogColor = null) {
     // kilometres of mountain came out one flat pale grey -- the same failure as corduroy
     // everywhere: no contrast, no distance, no mountain. A second noise field at about 600 m
     // picks out the faces that are scoured and broken, and the steep parts join in.
-    const high = sm((y - (lowest + 260)) / 520);
-    const band = sm((ridged(x * 0.0016 + 7, z * 0.0016 + 3, 3) - 0.38) / 0.22);
-    const snowy = high * (1 - Math.min(1, band + sm((slope - 28) / 18)));
-    const rock = 1 - snowy;
+    // SNOW IS THE DEFAULT AND ROCK IS CARVED OUT OF IT, not the other way round. Gating snow on
+    // height made the bottom 260 m of the range solid rock at an albedo of 0.2 against near snow
+    // at 0.9 -- so the largest object in most frames was darker than everything in front of it,
+    // which is not how distance works and made it look like a different material from a different
+    // game. Distant peaks are the BRIGHTEST thing in a mountain photograph.
+    // Rock needs BOTH a band and a slope, and it is capped. Either condition on its own
+    // saturated: the band noise alone came back over its threshold across most of the range, so
+    // four kilometres of mountain resolved to rock at an albedo of 0.2 and rendered darker than
+    // the sunlit snow in front of it, which is the opposite of how distance works. Snow is what a
+    // distant peak is made of; rock is a scar on it.
+    const band = sm((ridged(x * 0.0016 + 7, z * 0.0016 + 3, 3) - 0.44) / 0.22);
+    const steep = sm((slope - 34) / 22);
+    const low = sm((lowest + 120 - y) / 300);      // only the valley floor itself loses its snow
+    const rock = Math.min(0.62, band * steep * 1.5 + low * 0.35);
+    const snowy = 1 - rock;
     // Warmer and darker than the haze it sits in, or it dissolves into its own aerial perspective.
     const shade = 0.15 + 0.10 * (((Math.sin(x * 0.021 + z * 0.013) * 4375.5) % 1 + 1) % 1);
     const alb = [
@@ -426,7 +447,14 @@ function makeMountains(map, sunDir = null, fogAmt = 0.35, fogColor = null) {
     // invisible. Wrapping the term keeps the gradation across faces that are all, strictly, in
     // shade, which is also closer to what a big hazy airmass actually does to light.
     const raw = sunDir ? nx * sunDir.x + ny * sunDir.y + nz * sunDir.z : 0.2;
-    const ndl = Math.max(0, (raw + 0.35) / 1.35);
+    // Wrapped HARD -- 0.65, not 0.35. Four kilometres of hazy air between you and a ridge does
+    // not only wash its colour out, it fills its shadows in: the airmass is itself a light source
+    // and the contrast you would see standing on that ridge is simply not what arrives. At the
+    // tighter wrap a backlit range came out darker than the sunlit snow in front of it, which is
+    // the opposite of how distance works and made the largest object in the frame look like it
+    // belonged to a different game. In a mountain photograph the far peaks are the BRIGHTEST
+    // thing in it.
+    const ndl = Math.max(0, (raw + 0.65) / 1.65);
     const lit = sunLit(x, y, z);
     const sun = 0.92 * ndl * lit;
     const skyView = 0.55 + 0.45 * Math.max(0, ny);   // a face looking up sees more of the dome
@@ -439,7 +467,11 @@ function makeMountains(map, sunDir = null, fogAmt = 0.35, fogColor = null) {
     // it reaches on a clear day is deliberately low: alpine air is very clear, and at two thirds
     // haze every difference between rock and snow and between a lit face and a shaded one was
     // compressed into a grey band, which is the cut-out this was built to stop.
-    const h = Math.min(HAZE_MAX, sm((d - 700) / 3000) * (HAZE_MAX * 1.15));
+    // Haze pools in the bottom of a valley, which is the other half of why a range's feet seem to
+    // dissolve into the ground rather than ending at a line. Without it the mesh's lower boundary
+    // is a hard edge against the sky and reads as exactly what it is.
+    const lowFade = 1 - sm((y - (lowest - 40)) / 380);
+    const h = Math.min(0.93, sm((d - 500) / 2600) * HAZE_MAX + lowFade * lowFade * 0.42);
     for (let k = 0; k < 3; k++) {
       const rad = alb[k] * (sun + SKY[k] * skyView);
       col[v * 3 + k] = rad * (1 - h) + HAZE[k] * h;

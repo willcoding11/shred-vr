@@ -218,6 +218,7 @@ Keys: `1–8` terrain tools · `Q/W/E/R` place / scatter / remove / select · `F
 ```
 npm run gen-maps                     # regenerate the three starter maps
 npm run render-maps                  # top-down PNG + stats for each map into ./renders
+npm run shots                        # receive screenshots from shredShots(); see "The look"
 node tools/physics-check.mjs         # 21 assertions: does the model do what the controls promise?
 node tools/sim-test.js <map> follow  # a virtual player rides the map top to bottom
 node tools/sim-test.js <map> gates   # ...aiming for the gates instead
@@ -229,6 +230,34 @@ node tools/ws-stability.mjs 40       # a live client survives the server heartbe
 
 The virtual player in `sim-test.js` only does what a real one can: it puts the board somewhere
 and holds it there. It has no steering function, because the game has none.
+
+## The look
+
+Six runs used to ship the same sky, one corduroy texture covered every square metre of every map,
+rock appeared only past 58 degrees so no map had any, and the world outside the playable ground was
+a ring of flat-shaded peaks on a white disc. The snow in front of the rider measured a standard
+deviation of 4.5 out of 255 -- the whole near field of every screenshot inside two histogram
+buckets. `docs/look.md` is what was wrong, what was done, and the four things that were only
+obvious afterwards.
+
+The short version: each run has its own hour and weather; a derived mask says where a groomer has
+been, so corduroy lives on the piste and untouched snow gets its texture from micro-relief instead;
+rock starts at 36 degrees, noise-broken and biased by aspect; the horizon is a real heightfield
+that starts where the map stops and lights itself; conifers have needles under the snow again; the
+trees throw shadows across the hill; and one gust signal drives the spindrift, the trees and the
+wind you hear.
+
+Judge changes to it with the harness rather than from memory, because three changes to the light in
+a row each felt like an improvement while the picture got worse:
+
+```
+npm run shots                          # the receiver, in another terminal
+await shredShots({ set: 'before' })                      # this map, from the game's console
+await shredShots({ set: 'after', maps: 'all' })          # every map
+```
+
+Nine viewpoints per map, derived from the map rather than typed out, at one fixed canvas size.
+They land in `renders/shots/<set>/`.
 
 ## Design notes
 

@@ -18,19 +18,45 @@ const tmpS = new THREE.Vector3(), tmpE = new THREE.Euler(), UP = new THREE.Vecto
 // The normal has to come from AFTER the instance matrix, because rocks, boulders and huts are
 // rotated to sit on the slope they stand on; the props group itself has no transform, so
 // instance space is world space here.
-function snowOnTop(mat, { amount = 1, canopy = 0 } = {}) {
+function snowOnTop(mat, { amount = 1, canopy = 0, sway = 0 } = {}) {
+  // Kept on the material so the wind can be pushed in every frame. onBeforeCompile hands out a
+  // fresh uniforms object each compile, so the values have to live somewhere that outlives it.
+  mat.userData.wind = { uTime: { value: 0 }, uGust: { value: 0.4 }, uWind: { value: new THREE.Vector2(0.93, 0.37) } };
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uSnowCap = { value: amount };
     sh.uniforms.uCanopy = { value: canopy };
+    if (sway > 0) Object.assign(sh.uniforms, mat.userData.wind);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
-      varying float vUpN;`)
+      varying float vUpN;
+      ${sway > 0 ? 'uniform float uTime; uniform float uGust; uniform vec2 uWind;' : ''}`)
       .replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
   #ifdef USE_INSTANCING
     vUpN = normalize( mat3( instanceMatrix ) * objectNormal ).y;
   #else
     vUpN = normalize( objectNormal ).y;
-  #endif`);
+  #endif`)
+      // THE TREES MOVE, on the same gust as everything else.
+      //
+      // Only above the first metre and rising sharply with height, because a trunk does not bend
+      // and a tip does. The wind is a WORLD direction rotated back into the instance's own space
+      // -- every tree is planted at a random yaw, so displacing along object X would have each
+      // one leaning a different way, which reads as jitter rather than as weather. The instance
+      // scale is uniform, so normalising the two columns is all the inverse rotation needed.
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+${sway > 0 ? `{
+  #ifdef USE_INSTANCING
+    vec3 wW = vec3( uWind.x, 0.0, uWind.y );
+    vec2 wObj = normalize( vec2( dot( instanceMatrix[ 0 ].xyz, wW ), dot( instanceMatrix[ 2 ].xyz, wW ) ) + 1e-5 );
+    float ph = instanceMatrix[ 3 ].x * 0.23 + instanceMatrix[ 3 ].z * 0.17;
+  #else
+    vec2 wObj = uWind;
+    float ph = 0.0;
+  #endif
+  float up = max( 0.0, ( transformed.y - 1.1 ) / 8.0 );
+  float amp = pow( up, 1.6 ) * ( 0.10 + uGust * 0.42 ) * ${sway.toFixed(2)};
+  transformed.xz += wObj * amp * sin( uTime * 1.9 + ph );
+}` : ''}`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
       varying float vUpN;
@@ -327,7 +353,7 @@ export class PropRenderer {
     // InstancedMesh, so this is one more material, not one more draw call -- and it means the
     // canopy rule can be aggressive without touching a hut roof or the top of a rail.
     this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88 });
-    snowOnTop(this.treeMat, { canopy: 1.0 });
+    snowOnTop(this.treeMat, { canopy: 1.0, sway: 1.0 });
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
     this.meshes = {};
     this.items = [];
@@ -335,6 +361,15 @@ export class PropRenderer {
     this.sync();
   }
   setMap(map) { this.map = map; this.sync(); }
+
+  // The one wind, from Scenery, reaching the only material that reads it.
+  setWind(time, gust, dirX, dirZ) {
+    const u = this.treeMat && this.treeMat.userData.wind;
+    if (!u) return;
+    u.uTime.value = time;
+    u.uGust.value = gust;
+    u.uWind.value.set(dirX, dirZ);
+  }
 
   // Throw the meshes away and rebuild them. sync() reuses a mesh whose capacity still fits, which
   // is right for a prop being added and wrong for the geometry underneath it being swapped -- as

@@ -136,6 +136,8 @@ function applyMap(m, keepPosition = false) {
   rebuildMarkers(); rebuildSpatial();
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
   terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
+  // The spindrift has to sit on whatever ground is under it, and Scenery has no terrain of its own.
+  scenery.ground = (x, z) => terrain.heightAt(x, z);
   scenery.setGround(map);
   if (!rider) rider = new Rider(terrain, { boardLength: settings.boardLength });
   if (!walker) walker = new Walker(terrain);
@@ -175,6 +177,8 @@ function settleTerrain() {
   terrain.setRails();                   // the boxes sit on ground that has just moved
   terrain.bakeLight();
   terrain.recolor();
+  // The spindrift has to sit on whatever ground is under it, and Scenery has no terrain of its own.
+  scenery.ground = (x, z) => terrain.heightAt(x, z);
   scenery.setGround(map);
   if (map.lifts && map.lifts.length) rebuildLifts();
   rebuildSpatial();
@@ -398,6 +402,8 @@ live.on('env', (msg) => {
   map.env = { ...map.env, ...msg.env };
   scenery.setEnv({ ...map.env, snowfall: settings.snowfall ? map.env.snowfall : 0 });
   terrain?.setSun(scenery.sunDir);   // the hill bakes its own sun shadows, so it has to know where the sun is
+  // The spindrift has to sit on whatever ground is under it, and Scenery has no terrain of its own.
+  scenery.ground = (x, z) => terrain.heightAt(x, z);
   scenery.setGround(map);
   rider.snow = SNOW[map.env.snowType] || SNOW.groomed;
   terrain.recolor(); flashLive();
@@ -618,6 +624,7 @@ renderer.setAnimationLoop(() => {
   terrain?.update(inXR && rider ? rider.boardPos : tmpV);
   props?.cull(inXR && rider ? rider.boardPos : tmpV);
   scenery.update(dt, inXR ? rider.boardPos : tmpV, { position: tmpV });
+  props?.setWind(scenery.wind.t, scenery.wind.gust, scenery.wind.dirX, scenery.wind.dirZ);
   renderer.render(scene, camera);
 });
 
@@ -778,7 +785,7 @@ function stepVR(dtReal, now) {
   const railNow = rider.grounded
     && terrain.slipAt(rider.boardPos.x, rider.boardPos.z) > 0.5 ? 1 : 0;
   if (railNow !== onRail) { if (railNow) audio.railOn(); else audio.railOff(); onRail = railNow; }
-  audio.update(dtReal, { speed: rider.speed * slowMo, carving: rider.carving, skidding: rider.skidding, grounded: rider.grounded, tuck: tuckAmount(), onRail });
+  audio.update(dtReal, { speed: rider.speed * slowMo, carving: rider.carving, skidding: rider.skidding, grounded: rider.grounded, tuck: tuckAmount(), onRail, gust: scenery.wind.gust });
   const st = hudState();
   st.slow = slowMo < 0.9;
   hud.update(st, now);
@@ -960,7 +967,11 @@ window.shredShots = async ({ set = 'latest', maps = null, port = 8099, w = 1280,
         camera.getWorldPosition(tmpV);
         lifts?.update(0.016, tmpV);
         terrain.update(tmpV); props.cull(tmpV, true);
-        scenery.update(0.016, tmpV, { position: tmpV });
+        // Twice, and at a step the throttled systems will act on: the snowfall and the spindrift
+        // only move at 30 Hz, so a single 16 ms tick leaves them wherever the last live frame put
+        // them -- which on a jump of five hundred metres is nowhere near this shot.
+        scenery.update(0.04, tmpV, { position: tmpV });
+        scenery.update(0.04, tmpV, { position: tmpV });
         renderer.render(scene, camera);
         const name = `${map.id}-${v.name}`;
         const body = renderer.domElement.toDataURL('image/jpeg', 0.92);

@@ -253,12 +253,17 @@ export class GameAudio {
     if (this.railSurface) { try { this.railSurface.stop(); this.railSurface.disconnect(); } catch {} }
     this.railSurface = src;
   }
-  update(dt, { speed = 0, carving = 0, skidding = 0, grounded = true, tuck = 0, onRail = 0 } = {}) {
+  update(dt, { speed = 0, carving = 0, skidding = 0, grounded = true, tuck = 0, onRail = 0, gust = 0.4 } = {}) {
     if (!this.ctx || !this.enabled) return;
     const t = this.ctx.currentTime, tc = 0.08;
     const s = Math.min(1, speed / 28);
-    this.wind.g.gain.setTargetAtTime(0.02 + s * s * 0.5 * (1 - tuck * 0.3), t, tc);
-    this.wind.f.frequency.setTargetAtTime(250 + s * 1600, t, tc);
+    // THE SAME GUST YOU CAN SEE. Standing still on a ridge used to be silent, because every
+    // wind term was a function of how fast YOU were going -- so the mountain had weather you
+    // could see in the spindrift and the trees and could not hear at all. This is the one signal
+    // Scenery hands out, so the lull that drops the plume drops the hiss with it.
+    const g = 0.35 + gust * 0.9;
+    this.wind.g.gain.setTargetAtTime(0.02 + (0.055 * g) + s * s * 0.5 * (1 - tuck * 0.3) * (0.75 + gust * 0.4), t, tc);
+    this.wind.f.frequency.setTargetAtTime(250 + s * 1600 + gust * 220, t, tc);
     this.carve.g.gain.setTargetAtTime(grounded ? carving * Math.min(1, speed / 12) * 0.16 : 0, t, tc);
     this.carve.f.frequency.setTargetAtTime(1200 + speed * 40, t, tc);
     this.skid.g.gain.setTargetAtTime(grounded ? skidding * Math.min(1, speed / 10) * 0.3 : 0, t, tc);

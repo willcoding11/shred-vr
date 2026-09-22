@@ -75,6 +75,16 @@ export class Scenery {
     this.wantMountains = mountains;
     if (mountains) scene.add(this.mountains = makeMountains(null));
     this.snow = makeSnowfall(); scene.add(this.snow.points);
+    // ONE WIND, and everything that moves reads it.
+    //
+    // Nothing in this world was being acted on by anything. The lift chairs went round and a
+    // handful of flakes fell, and that was the entire inventory of motion on a mountain -- which
+    // is half of why it reads as a photograph of a place rather than a place. The cheapest way
+    // out of that is not more effects, it is ONE signal that several things obey at once: the
+    // same gust that lifts snow off a crest bends the trees and rises in your ears. Separate
+    // wiggles on separate timers read as a screensaver; a shared one reads as weather.
+    this.wind = { dirX: 0.93, dirZ: 0.37, gust: 0.5, strength: 0.2, t: 0 };
+    this.spindrift = makeSpindrift(); scene.add(this.spindrift.points);
     this.env = {};
     this.setEnv({ timeOfDay: 0.35, fog: 0.35, snowfall: 0.2 });
   }
@@ -186,6 +196,13 @@ export class Scenery {
   // Keep the shadow frustum and the sky centred on the viewer.
   update(dt, viewerPos, camera) {
     this.skyUniforms.time.value += dt;
+    // Two slow sines beating against each other: no repeat you can hear or see, no noise texture,
+    // no state. Real gusts arrive in bursts with lulls between them, which one sine cannot do.
+    const wt = (this.wind.t += dt);
+    const base = this.env.wind ?? 0.2;
+    const g = 0.5 + 0.5 * Math.sin(wt * 0.41) * Math.sin(wt * 0.13 + 1.7);
+    this.wind.gust = Math.max(0, Math.min(1, 0.25 + g * 0.9)) * (0.35 + base * 1.3);
+    this.wind.strength = base;
     if (this._envDirty) {
       this._envDirty = false;
       this.buildEnvironment();
@@ -199,6 +216,7 @@ export class Scenery {
     // The far country is a fixed place in the world. It used to be pinned to the camera, so 480 m
     // of descent moved the far peaks not one pixel and the strongest scale cue in the scene was dead.
     this.snow.update(dt, camera.position, this.env.wind ?? 0.2);
+    this.spindrift.update(dt, viewerPos, this.wind, this.ground);
   }
 }
 
@@ -442,6 +460,93 @@ function lowestOf(map) {
   return lo === Infinity ? -200 : lo;
 }
 
+// A round, soft point. Without one, a PointsMaterial draws literal squares -- and a snowflake
+// two metres from your eye is then a white tile hanging in the sky, which is exactly what was in
+// every screenshot with snowfall turned on. One 32-pixel texture shared by every particle in the
+// scene.
+let _dot = null;
+function softDot() {
+  if (_dot) return _dot;
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.45, 'rgba(255,255,255,0.82)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 32, 32);
+  _dot = new THREE.CanvasTexture(c);
+  _dot.colorSpace = THREE.SRGBColorSpace;
+  return _dot;
+}
+
+// SPINDRIFT: snow the wind has picked up off the ground and is carrying.
+//
+// The thing every photograph of a windy ridge has in it and this had nothing of. It is also the
+// one moving thing that reads at DISTANCE -- a tree swaying is invisible past thirty metres in a
+// headset, but a plume tearing off a crest half a kilometre away is the whole story of the
+// weather, and it happens up on the skyline where this world's frame is emptiest.
+//
+// Built like the snowfall: one Points, one draw call, a fixed pool recycled through a box that
+// follows the viewer. The difference is that these hug the ground -- each one is re-seated onto
+// the terrain every step -- so they read as snow being dragged across a surface rather than snow
+// falling through the air.
+function makeSpindrift(count = 700) {
+  const BOX = 120, half = BOX / 2;
+  const pos = new Float32Array(count * 3);
+  const life = new Float32Array(count), speed = new Float32Array(count), lift = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    pos[i * 3] = (Math.random() - 0.5) * BOX;
+    pos[i * 3 + 1] = 0;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * BOX;
+    life[i] = Math.random();
+    speed[i] = 5 + Math.random() * 11;
+    lift[i] = 0.15 + Math.random() * 2.2;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xf2f7ff, size: 0.15, map: softDot(), transparent: true, opacity: 0.5,
+    depthWrite: false, sizeAttenuation: true,
+  });
+  const points = new THREE.Points(g, mat);
+  points.frustumCulled = false; points.name = 'spindrift';
+  let acc = 0;
+  const c = new THREE.Vector3();
+  return {
+    points,
+    update(dt, viewer, wind, ground) {
+      const amount = Math.min(1, wind.strength * 1.9);
+      points.visible = amount > 0.06 && !!ground;
+      if (!points.visible || !viewer) return;
+      acc += dt; if (acc < 1 / 30) return;
+      dt = acc; acc = 0;
+      const n = Math.floor(count * amount);
+      g.setDrawRange(0, n);
+      mat.opacity = 0.22 + wind.gust * 0.42;
+      c.copy(viewer);
+      const vx = wind.dirX * (0.4 + wind.gust), vz = wind.dirZ * (0.4 + wind.gust);
+      for (let i = 0; i < n; i++) {
+        let x = pos[i * 3] + vx * speed[i] * dt;
+        let z = pos[i * 3 + 2] + vz * speed[i] * dt;
+        // Recycle across the box in world space, then re-seat onto whatever ground is there.
+        // Rounded rather than a single wrap either way, so the pool still lands around the viewer
+        // when the viewer has jumped -- which is what the reset does, and what the screenshot
+        // harness does eight times a map.
+        x -= Math.round((x - c.x) / BOX) * BOX;
+        z -= Math.round((z - c.z) / BOX) * BOX;
+        life[i] += dt * 0.55;
+        if (life[i] > 1) life[i] -= 1;
+        // Up off the surface and back down again: a grain of snow gets picked up, carried, and
+        // dropped, and the plume is the envelope of thousands of those.
+        const h = Math.sin(life[i] * Math.PI) * lift[i] * (0.35 + wind.gust);
+        pos[i * 3] = x; pos[i * 3 + 2] = z;
+        pos[i * 3 + 1] = ground(x, z) + 0.05 + h;
+      }
+      g.attributes.position.needsUpdate = true;
+    },
+  };
+}
+
 function makeSnowfall(count = 1400) {
   const box = 70, half = box / 2;
   const pos = new Float32Array(count * 3), vel = new Float32Array(count);
@@ -451,7 +556,7 @@ function makeSnowfall(count = 1400) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.12, transparent: true, opacity: 0.85, depthWrite: false, sizeAttenuation: true });
+  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.13, map: softDot(), transparent: true, opacity: 0.85, depthWrite: false, sizeAttenuation: true });
   const points = new THREE.Points(g, mat); points.frustumCulled = false; points.name = 'snowfall';
   let density = 0.2, t = 0, acc = 0;
   const center = new THREE.Vector3();

@@ -33,6 +33,26 @@ const norm = (s) => String(s).toLowerCase().replace(/[.\s_-]/g, '').replace(/\d+
 // "Cube003" -> null, "pine.001" -> "pine", "Rock_2" -> "rock"
 const typeFromName = (name) => (TYPES.includes(norm(name)) ? norm(name) : null);
 
+// NOTHING IN A WINTER FOREST IS THAT GREEN.
+//
+// The modelled conifer's needles arrive at (0.019, 0.367, 0.000) linear, which is a pure
+// saturated green, about #26a300 on screen. Against snow that is the loudest colour anywhere in
+// the frame, so in every wide shot the eye goes to the trees instead of to the mountain, and a
+// stand of them reads as plastic cones planted in a field rather than as a forest. Real spruce
+// and pine under snow are dark, blue-green and close to black in their own shade; the value is
+// what makes a treeline read as a treeline from a kilometre away.
+//
+// Only foliage is touched, and foliage is any colour where green clearly dominates both other
+// channels. Trunks, snow, rock, paint and window glass go through unchanged -- which matters,
+// because this runs over every primitive of every modelled prop.
+function grade(c) {
+  if (!(c.g > c.r * 1.7 && c.g > c.b * 1.7 && c.g > 0.06)) return c;
+  // Keep the relative brightness the model was built with, land it in a range that is dark and
+  // blue rather than bright and pure.
+  const t = Math.min(1, c.g / 0.37);
+  return c.setRGB(0.030 + 0.020 * t, 0.074 + 0.056 * t, 0.049 + 0.031 * t);
+}
+
 // Bake each primitive's material colour into vertex colours and merge the lot into one geometry.
 //
 // Instancing needs one material per mesh, and the game's prop material is already vertexColors.
@@ -49,7 +69,7 @@ function bake(object3d) {
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     const n = g.attributes.position.count;
     const col = new Float32Array(n * 3);
-    const c = mats[0]?.color || new THREE.Color(0.8, 0.8, 0.8);
+    const c = grade(mats[0]?.color || new THREE.Color(0.8, 0.8, 0.8));
     for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     // Anything the game does not read is dead weight in a buffer that ships to a headset.

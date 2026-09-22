@@ -11,6 +11,49 @@ import { variantIndex, setRailSizes } from './collide.js';
 const tmpM = new THREE.Matrix4(), tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpQ2 = new THREE.Quaternion();
 const tmpS = new THREE.Vector3(), tmpE = new THREE.Euler(), UP = new THREE.Vector3(0, 1, 0), tmpN = new THREE.Vector3();
 
+// SNOW SETTLES ON TOP OF THINGS.
+//
+// The modelled rocks come in as one flat grey all over, so a boulder sitting on a snowfield is a
+// dark blob with a hard edge against the white -- the procedural ones at least dusted their
+// up-facing faces and the modelled ones lost even that. The same goes for hut roofs, the top of a
+// fence rail, the flat of a sign and the upper branches of anything that was modelled bare.
+//
+// One dot product against world up decides it, and a brightness test keeps it off anything that
+// is already snow: without that the tree caps and the white firs get mixed toward a slightly
+// different white and go flatter, which is the opposite of the point. Four instructions in a
+// material that is already instanced, so it costs no draw calls and no extra geometry.
+//
+// The normal has to come from AFTER the instance matrix, because rocks, boulders and huts are
+// rotated to sit on the slope they stand on; the props group itself has no transform, so
+// instance space is world space here.
+function snowOnTop(mat, amount = 1) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uSnowCap = { value: amount };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>
+      varying float vUpN;`)
+      .replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
+  #ifdef USE_INSTANCING
+    vUpN = normalize( mat3( instanceMatrix ) * objectNormal ).y;
+  #else
+    vUpN = normalize( objectNormal ).y;
+  #endif`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+      varying float vUpN;
+      uniform float uSnowCap;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  float up = smoothstep( 0.52, 0.94, vUpN );
+  float bright = max( diffuseColor.r, max( diffuseColor.g, diffuseColor.b ) );
+  float room = smoothstep( 0.62, 0.22, bright );   // already white? then it is snow, leave it
+  diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.88, 0.91, 0.97 ), up * room * uSnowCap );
+}`);
+  };
+  mat.needsUpdate = true;
+  return mat;
+}
+
 function colored(geo, hex) {
   const c = new THREE.Color(hex), n = geo.attributes.position.count, arr = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
@@ -255,6 +298,7 @@ export class PropRenderer {
     this.map = map; this.shadows = shadows; this.quality = quality; this.lod = lod;
     this.group = new THREE.Group(); this.group.name = 'props';
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+    snowOnTop(this.material);
     this.lampMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xffd27a, emissiveIntensity: 0.35 });
     this.meshes = {};
     this.items = [];
@@ -322,10 +366,19 @@ export class PropRenderer {
       }
       tmpS.set(s, s, s);
       tmpM.compose(tmpP, tmpQ, tmpS);
+      // PER-INSTANCE TINT, AND IT HAS TO BE WIDE.
+      //
+      // At 0.90 to 1.10 every tree in a stand was within a tenth of every other one, which at any
+      // distance is one flat mass of the same green. A stand reads as a stand because some of it
+      // is in the light and some of it is in the shade of the rest, and that is a range of nearly
+      // two to one. Two hashes rather than one, so how dark a tree is and what hue it is are not
+      // the same number -- with a single hash every dark tree was also the bluest tree, which is a
+      // gradient, not variation.
       const j = ((Math.sin(p.x * 91.7 + p.z * 47.3) * 43758.5453) % 1 + 1) % 1;
-      const v = 0.90 + j * 0.20;
+      const j2 = ((Math.sin(p.z * 31.3 + p.x * 17.9) * 24634.6345) % 1 + 1) % 1;
+      const v = 0.72 + j * 0.40;
       this.items.push({ x: p.x, z: p.z, keys, m: tmpM.elements.slice(),
-                        c: [v * (1 - j * 0.05), v, v * (0.97 + j * 0.06)] });
+                        c: [v * (1 - j2 * 0.10), v, v * (0.94 + j2 * 0.14)] });
       for (const k of keys) if (k) caps[k] = (caps[k] || 0) + 1;
     }
     // (re)build the meshes to fit

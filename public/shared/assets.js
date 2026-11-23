@@ -13,7 +13,9 @@ import { PROP_TYPES } from './mapformat.js';
 import { scaleFor, DEFAULT_H } from './propsize.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const BASE = '/assets/';
+// Page-relative, so it works under a sub-path too (GitHub Pages serves this at /shred-vr/).
+// Every page that loads this sits one folder down: /game/, /editor/, /mixer/.
+const BASE = '../assets/';
 // Name an object after one of these in Blender and it needs no manifest entry.
 const TYPES = ['pine', 'fir', 'birch', 'rock', 'boulder', 'rail', 'hut', 'lamp', 'sign', 'snowman', 'fence'];
 // how tall each one should end up, when the name alone tells us what it is

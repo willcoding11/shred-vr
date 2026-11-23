@@ -25,6 +25,17 @@ drag to look, scroll to zoom — and a button to put the headset on.
 3. Hold the controllers low, roughly where your feet would be. The first pose you hold is taken
    as "board flat" — no button to press.
 
+### Without the PC: GitHub Pages
+
+https://willcoding11.github.io/shred-vr/ is a static copy of the game, with no server needed.
+Maps load from JSON files that sit next to it, and there is no live link to the editor. To update it:
+
+    node tools/build-pages.mjs      # writes dist/pages
+    # then commit dist/pages to the gh-pages branch (a git worktree on dist/pages works) and push
+
+The game decides it is static when the host ends in `github.io`, or when the websocket closes
+before the server has said hello. With `npm start` nothing changes.
+
 ## Your controllers are your feet
 
 Not a metaphor. Where a controller is in your room is where that binding is, and the board is

@@ -5,3 +5,9 @@ server/certs/
 # the editor keeps deleted maps here; it is a recycle bin, not source
 maps/.trash/
 renders/shots/
+
+# static GitHub Pages build (tools/build-pages.mjs)
+dist/
+
+# local Claude Code run config, not part of the game
+.claude/

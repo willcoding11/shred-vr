@@ -8,7 +8,7 @@ import { Terrain } from '../shared/terrain.js';
 import { PropRenderer, makeStartGate, makeFinishBanner, useHandModels, setDetail } from '../shared/props.js';
 import { Scenery } from '../shared/scenery.js';
 import { LiftRenderer, baseNear, seatAt, unloadSpot, LIFT } from '../shared/lifts.js';
-import { LiveClient } from '../shared/live.js';
+import { LiveClient, OfflineLive } from '../shared/live.js';
 import { deserializeMap, applyRegion, PROP_TYPES, bounds, lowestHeight, heightAt } from '../shared/mapformat.js';
 import { buildColliders, radiusAt, clears, bonk } from '../shared/collide.js';
 import { Rider, SNOW } from './physics.js';
@@ -106,18 +106,31 @@ useHandModels().then((types) => {
   setStatus(`Using modelled props: ${types.join(', ')}`);
 }).catch((e) => console.warn('[assets]', e));
 
-const live = new LiveClient('game');
+// The static build (GitHub Pages) has no server: no /api, no websocket. Maps come from
+// maps/index.json and maps/<id>.json next to the game, written by tools/build-pages.mjs.
+// Anywhere else the server is assumed, with the static files as the fallback if it never answers.
+const STATIC_HOST = /\.github\.io$/i.test(location.hostname);
+const live = STATIC_HOST ? new OfflineLive() : new LiveClient('game');
 
 // ---------------- map ----------------
 let loadSeq = 0;
 const pinnedMap = new URL(location.href).searchParams.get('map') || null;
 const rememberedMap = (location.hash.match(/map=([a-z0-9-]+)/) || [])[1] || null;
 
+async function fetchMap(id) {
+  if (!STATIC_HOST) {
+    try { const res = await fetch(`/api/maps/${id}`); if (res.ok) return await res.json(); } catch {}
+  }
+  const res = await fetch(`../maps/${id}.json`);
+  if (!res.ok) throw new Error('not found');
+  return res.json();
+}
+
 async function loadMapById(id, { keepPosition = false } = {}) {
   if (!id) return;
   const seq = ++loadSeq;
   let data;
-  try { const res = await fetch(`/api/maps/${id}`); if (!res.ok) throw new Error('not found'); data = await res.json(); }
+  try { data = await fetchMap(id); }
   catch { if (seq === loadSeq) setStatus(`Could not load map "${id}"`); return; }
   if (seq !== loadSeq) return;
   applyMap(deserializeMap(data), keepPosition);
@@ -344,8 +357,31 @@ function finished() {
   hud.message(`Finish ${fmtTime(total)}${isBest ? ' · New best!' : ''}`, '', 6);
 }
 
+// ---------------- static maps (no server) ----------------
+let welcomed = false, staticBooted = false;
+async function bootStatic() {
+  if (welcomed || staticBooted) return;
+  staticBooted = true;
+  try {
+    const res = await fetch('../maps/index.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const idx = await res.json();
+    if (welcomed) return;                 // the server turned up after all
+    mapsList = idx.maps || [];
+    fillMapSelect();
+    const ids = new Set(mapsList.map((m) => m.id));
+    const want = [pinnedMap, rememberedMap, idx.active].find((id) => id && ids.has(id)) || mapsList[0]?.id;
+    loadMapById(want);
+    $('live').className = 'pill live off'; $('live').textContent = 'Offline';
+  } catch { staticBooted = false; setStatus('No server and no map list'); }
+}
+if (STATIC_HOST) bootStatic();
+// A socket that drops before it ever said hello means no server: fall back to the static maps.
+live.on('close', () => { if (!welcomed) bootStatic(); });
+
 // ---------------- live sync ----------------
 live.on('welcome', (msg) => {
+  welcomed = true;
   mapsList = msg.maps || [];
   fillMapSelect();
   const want = pinnedMap || msg.active || map?.id || rememberedMap || mapsList[0]?.id;

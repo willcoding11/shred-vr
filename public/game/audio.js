@@ -76,7 +76,7 @@ function slowNoise(ctx, hz, secs) {
 // cost you the texture, not the sound -- and because the mixer offers it as a preset.
 export const SYNTH_ONLY = { sampleGain: 0, hissGain: 0.40, ringGain: 0.40, boardGain: 0.24 };
 
-export const RAIL_SAMPLE_URL = '/assets/audio/rail-grind.ogg';
+export const RAIL_SAMPLE_URL = '../assets/audio/rail-grind.ogg';   // page-relative, see shared/assets.js
 
 // Bending modes of a snowboard deck, as measured: 16, 37 and 65 Hz, free-free.
 const BOARD_MODES = [1, 37 / 16, 65 / 16];

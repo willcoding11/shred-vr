@@ -54,3 +54,12 @@ export class LiveClient {
     this.dropped = true;
   }
 }
+
+// Stand-in for LiveClient where there is no server at all (the static build on GitHub Pages):
+// same interface, never connects, so the page makes no websocket attempt and logs nothing.
+export class OfflineLive {
+  constructor() { this.connected = false; }
+  on() { return this; }
+  emit() {}
+  send() {}
+}

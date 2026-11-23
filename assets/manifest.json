@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "Which object in props.glb becomes which prop in the game.",
+    "",
+    "The key is the OBJECT NAME in Blender. Name an object after a prop type -- pine, fir, birch,",
+    "rock, boulder, rail, hut, lamp, sign, snowman, fence -- and it is picked up with no entry here",
+    "at all. Several objects mapped to the same type are VARIANTS, spread across the map.",
+    "",
+    "SIZE: give ONE of `height`, `length` or `width`, in metres. The scale stays UNIFORM whichever",
+    "you pick, so how big you modelled it does not matter, only its proportions do. The rails are",
+    "sized by WIDTH here on purpose: they share one cross-section and differ only in length, which",
+    "is what small/medium/large should mean, and sizing them by length instead would make the long",
+    "one narrower than the board that has to balance on it.",
+    "",
+    "`lod: \"far\"` marks a low-poly stand-in used past the full-detail radius instead of the real",
+    "mesh. Without one, a modelled prop simply stops being drawn out there.",
+    "",
+    "`skip` leaves an object out entirely. Run: node tools/asset-check.mjs"
+  ],
+  "source": "props.glb",
+  "map": {
+    "Tree": {
+      "type": "pine",
+      "height": 8.4
+    },
+    "Snowy Tree": {
+      "type": "fir",
+      "height": 10.2
+    },
+    "Lower Poly Tree": {
+      "type": "pine",
+      "lod": "far",
+      "height": 8.4
+    },
+    "Lower Poly Snowy Tree": {
+      "type": "fir",
+      "lod": "far",
+      "height": 10.2
+    },
+    "Rock 1": {
+      "type": "rock",
+      "height": 1.2
+    },
+    "Rock 2": {
+      "type": "rock",
+      "height": 1.5
+    },
+    "Snowy Rock 1": {
+      "type": "boulder",
+      "height": 2.8
+    },
+    "Snowy Rock 2": {
+      "type": "boulder",
+      "height": 3.2
+    },
+    "Small Rail": {
+      "type": "rail",
+      "width": 0.32
+    },
+    "Medium Rail": {
+      "type": "rail",
+      "width": 0.32
+    },
+    "Large Rail": {
+      "type": "rail",
+      "width": 0.32
+    },
+    "DONT USE": {
+      "type": "skip"
+    },
+    "DONT USE.001": {
+      "type": "skip"
+    }
+  }
+}

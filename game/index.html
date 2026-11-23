@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Shred VR</title>
+<link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./game.css?v=1" />
+<script type="importmap">
+{ "imports": { "three": "../vendor/three/three.module.js", "three/addons/": "../vendor/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+
+<header class="topbar">
+  <div class="brand"><span class="logo"></span>Shred VR</div>
+  <span id="fps" class="pill fps" hidden>— fps</span>
+  <div class="mapbar">
+    <select id="mapSelect" aria-label="Map"></select>
+    <span id="mapName" class="hidden"></span>
+    <span id="mapDiff" class="pill diff green">green</span>
+    <span id="live" class="pill live off">Connecting</span>
+  </div>
+  <div class="actions">
+    <button id="btnRestart" class="btn ghost" title="Restart the run">Restart</button>
+    <button id="btnHelp" class="btn ghost" title="How it works">Controls</button>
+    <button id="btnSettings" class="btn ghost" title="Settings">Settings</button>
+    <button id="vrBtn" class="btn primary">Enter VR</button>
+  </div>
+</header>
+
+<div class="hud">
+  <div class="speed"><span id="speed">0</span><small>km/h</small></div>
+  <div class="stats">
+    <div class="time"><span id="time">0:00.00</span><small id="best"></small></div>
+    <div class="row"><span id="gforce">0.0 g</span><span id="air"></span></div>
+    <div class="edge"><span class="lbl">heel</span><div class="edge-track"><div id="edgeFill" class="edge-fill"></div><i></i></div><span class="lbl">toe</span></div>
+  </div>
+</div>
+
+<div id="onboard" class="onboard" hidden>
+  <div class="onboard-card">
+    <h2>Your controllers are your feet</h2>
+    <p>Not a metaphor. Wherever you hold the controllers is exactly where the bindings are, and the board is the rigid thing spanning between them. You can lift it, stand it on edge, swing the nose round, press the tail down &mdash; anywhere in space.</p>
+    <ol>
+      <li><b>Hold them low</b>, roughly where your feet would be. The snow ends up at that height, so you will be close to the board. That is the point.</li>
+      <li><b>To set off</b>, point the nose down the hill and you will simply start to slide. Or set an edge across the slope and shove the board sideways under you: the edge will not slide, so you go the other way instead.</li>
+      <li><b>To turn</b>, roll the board onto an edge <em>and swing it round</em>. Swinging it opens an angle between where the board points and where you are going, and the edge grips that and drags you round. Tilt without swinging and you run almost straight, exactly as a real board does.</li>
+      <li><b>To stop</b>, swing the board across your direction of travel and lean it into the hill.</li>
+      <li><b>To jump</b>, drive the board down into the snow with your feet. The snow will not move, so you go up instead.</li>
+      <li><b>Hold either grip for slow motion</b> when a landing is coming at you faster than you can think.</li>
+    </ol>
+    <p class="warn">The world never turns you. Your heading is your body's heading in the room, so a big turn means physically swinging round &mdash; the same thing your body does on a real board.</p>
+    <div class="row"><button id="onboardGo" class="btn primary">Enter VR</button></div>
+  </div>
+</div>
+
+<div id="msgWrap" class="msg"><div id="msg"></div><div id="msgSub"></div></div>
+<div id="status" class="status"></div>
+
+<aside id="settings" class="drawer">
+  <div class="drawer-head"><h2>Settings</h2><button id="btnCloseSettings" class="btn icon" aria-label="Close">✕</button></div>
+  <div class="drawer-body">
+    <section>
+      <h3>Stance</h3>
+      <label>Lead foot <select id="setStance"><option value="regular">Regular (left foot forward)</option><option value="goofy">Goofy (right foot forward)</option></select></label>
+      <label>Board length <input id="setBoardLen" type="range" min="1.2" max="1.8" step="0.05" /><output></output></label>
+      <p class="note">The board spans between your hands, but its length here sets how far the nose and tail reach past them &mdash; which is what decides when the nose catches.</p>
+    </section>
+    <section>
+      <h3>Feel</h3>
+      <label>Realism <select id="setRealism"><option value="real">Real — true grip limits</option><option value="easy">Easy — the edge forgives more</option></select></label>
+      <label>Roll sensitivity <input id="setRoll" type="range" min="0.6" max="2.2" step="0.05" /><output></output></label>
+      <label>Slow motion <input id="setSlowMo" type="range" min="0.15" max="0.8" step="0.05" /><output></output></label>
+      <label>Leg suspension <input id="setLegs" type="range" min="6" max="40" step="1" /><output></output></label>
+      <label>Pose smoothing <input id="setSmoothing" type="range" min="0" max="0.2" step="0.01" /><output></output></label>
+      <p class="note">Roll sensitivity above 1 means a small wrist turn tips the board further; 1 matches your hands exactly. Lower leg suspension soaks up more of the terrain before it reaches your head, at the cost of a floatier ride.</p>
+    </section>
+    <section>
+      <h3>Comfort &amp; quality</h3>
+      <label>Look <select id="setQuality"><option value="fast">Fast — clean and light</option><option value="real">Real — everything on</option></select></label>
+      <p class="note">"Real" changes nothing you can feel. It adds a filmic tone curve, a sky built from actual atmospheric scattering, snow that sparkles and glows blue in its own shadow, proper conifers and a sharper shadow map. It is heavier, so try it on the headset before committing to it.</p>
+      <label>Turn vignette <input id="setVignette" type="range" min="0" max="1" step="0.05" /><output></output></label>
+      <label>Terrain relief <input id="setRelief" type="range" min="0" max="2" step="0.1" /><output></output></label>
+      <label>Shadows <select id="setShadows"><option value="on">On</option><option value="off">Off</option></select></label>
+      <label>Draw distance <select id="setDetail">
+        <option value="1">Normal</option>
+        <option value="1.6">Far — experimental</option>
+        <option value="2.5">Further — experimental</option>
+        <option value="4">As far as it goes — experimental</option>
+      </select></label>
+      <p class="note">Anything but Normal pushes full-detail terrain and props further out and turns on a frame counter. It is here to find where a headset gives up.</p>
+      <label>Snowfall <select id="setSnowfall"><option value="on">On</option><option value="off">Off</option></select></label>
+      <label>Sound <select id="setSound"><option value="on">On</option><option value="off">Off</option></select></label>
+      <label>Render scale <input id="setPixel" type="range" min="0.5" max="1.5" step="0.05" /><output></output></label>
+      <p class="note">Snow in flat light is nearly featureless. Relief darkens hollows and brightens crests so you can read a roller before you are on it; turn it down if it looks overdone.</p>
+    </section>
+  </div>
+</aside>
+
+<aside id="help" class="drawer">
+  <div class="drawer-head"><h2>Controls</h2><button id="btnCloseHelp" class="btn icon" aria-label="Close">✕</button></div>
+  <div class="drawer-body">
+    <section>
+      <h3>The board is between your hands</h3>
+      <ul class="keys">
+        <li><b>Position</b> Each controller is a binding. Move your hands and the board moves with them, in all three dimensions. Lift it and you are in the air.</li>
+        <li><b>Calibration</b> The first pose you hold becomes "board flat". Pull a trigger any time to re-take it, or use the menu.</li>
+        <li><b>Setting off</b> Nothing special happens here, and that is the point. Every force comes from the velocity of the board's contact patch, which is your speed <em>plus whatever your feet are doing</em>. Shove a dug-in edge and the snow shoves you back. Point the nose downhill and gravity does it.</li>
+        <li><b>Turning</b> Roll onto an edge and swing the board through the arc. Swing harder than that edge angle can hold and it washes out. There is no steering assist of any kind.</li>
+        <li><b>Carving versus skidding</b> Both turn you. A carve costs about a thirtieth as much speed per degree of direction change, so a skidded run arrives slow and a carved one arrives fast. That is the difference you are riding for.</li>
+        <li><b>Stopping</b> Put the board across your travel and roll it into the hill.</li>
+        <li><b>Jumping</b> The same contact rule read backwards. Drive the board down, the snow will not move, so your body goes up. Nothing is scripted and nothing is capped except against tracking glitches.</li>
+        <li><b>Your body</b> You have one. Hold the board over your head and it lifts off the snow rather than burying you in it.</li>
+        <li><b>Nose and tail</b> The board only touches where it touches. Press the nose in to plough and scrub speed; sit back and the nose lifts clear.</li>
+        <li><b>Slow motion</b> Hold either grip. Everything slows but the clock keeps running in real time, so it buys you control, not a better result. It is what makes a hand-driven landing catchable.</li>
+        <li><b>Buttons</b> Trigger recalibrates · A or X puts you back at the start, tapped twice resets the clock too · B or Y opens the menu.</li>
+        <li><b>Chairlifts</b> Come to a stop anywhere near a base station and a chair picks you up. Pull a trigger on the way up to skip straight to the top.</li>
+        <li><b>Hand tracking</b> Pinch index for the trigger, middle for the menu, ring to go back to the start, little finger for slow motion.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>On a desktop browser</h3>
+      <p>You cannot ride here, and that is deliberate &mdash; there is no sensible way to map two freely-moving feet onto a mouse. This page is a preview of the map you are editing: drag to look, scroll to zoom. Put the headset on to ride.</p>
+    </section>
+    <section>
+      <h3>Physics notes</h3>
+      <p>The rider is a point mass and the board is a rigid plate held wherever your hands are. The only thing joining them is the contact patch, and every force is computed from <em>its</em> velocity rather than yours. That one choice is why skating off the mark, ollies, carving and hockey stops all work without any of them being written as a feature.</p>
+      <p>An edge supplies grip of about tan(edge angle) times the load on the board, saturating where snow shears. Force builds with the slip angle between the board and your travel, on the same saturating curve a tyre has, and falls away once the board is washing. A board tilted to that angle is bent into an arc of 8&nbsp;m × cos(edge), and the tip of that bent edge already meets the snow slightly off centre, which is why a tilted board starts to come round before you swing it. A loaded board stores the bend and gives it back when you let the edge go.</p>
+      <p>Everything that costs you speed acts against your direction of travel, never along the board: friction, snow you plough aside (which grows with the square of your speed), and the drag induced by the edge force itself. That last one is why nothing you do with your hands can ever make you faster on the flat.</p>
+      <p>Base friction runs 0.03 to 0.08 by snow type, air drag is quadratic, and a board ploughing at an angle costs extra speed. Nothing ends a run. Trees stop you dead and you have to get going again, which costs more than a reset screen ever did.</p>
+    </section>
+  </div>
+</aside>
+
+<script type="module" src="./main.js?v=1"></script>
+</body>
+</html>

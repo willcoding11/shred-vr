@@ -1,0 +1,109 @@
+{
+  "active": "cornice",
+  "maps": [
+    {
+      "id": "alpine-bowl",
+      "name": "Alpine Bowl",
+      "difficulty": "black",
+      "size": {
+        "w": 340,
+        "h": 340
+      },
+      "spacing": 3,
+      "props": 1414,
+      "order": 0,
+      "description": "An open mountain. Four faces around one valley, a cirque, a gully, cliffs, a frozen tarn and a park, all draining to the village."
+    },
+    {
+      "id": "first-tracks",
+      "name": "First Tracks",
+      "difficulty": "green",
+      "size": {
+        "w": 96,
+        "h": 400
+      },
+      "spacing": 2,
+      "props": 257,
+      "order": 1,
+      "description": "A wide, forgiving groomer with soft rollers and a proper banked turn. Learn to link turns."
+    },
+    {
+      "id": "glade-run",
+      "name": "Glade Run",
+      "difficulty": "blue",
+      "size": {
+        "w": 112,
+        "h": 480
+      },
+      "spacing": 2,
+      "props": 369,
+      "order": 2,
+      "description": "A winding gully through the trees with banked turns, a gladed pitch and a kicker to finish."
+    },
+    {
+      "id": "ridge-line",
+      "name": "Ridge Line",
+      "difficulty": "black",
+      "size": {
+        "w": 112,
+        "h": 512
+      },
+      "spacing": 2,
+      "props": 502,
+      "order": 3,
+      "description": "Steep upper face, a cliff band onto a steep landing, a mogul field, then a rock chute to the finish."
+    },
+    {
+      "id": "cornice",
+      "name": "Cornice",
+      "difficulty": "black",
+      "size": {
+        "w": 112,
+        "h": 440
+      },
+      "spacing": 2,
+      "props": 160,
+      "order": 4,
+      "description": "A long run-in to one very big jump, then a fast tail with two smaller hits."
+    },
+    {
+      "id": "spine-line",
+      "name": "Spine Line",
+      "difficulty": "black",
+      "size": {
+        "w": 112,
+        "h": 470
+      },
+      "spacing": 2,
+      "props": 288,
+      "order": 5,
+      "description": "A knife-edge spine with both sides falling away, into a tight chute and a bowl."
+    },
+    {
+      "id": "couloir",
+      "name": "Couloir",
+      "difficulty": "black",
+      "size": {
+        "w": 96,
+        "h": 450
+      },
+      "spacing": 2,
+      "props": 185,
+      "order": 6,
+      "description": "A rock-walled chute that never opens up, with an ice band halfway and a sudden apron at the bottom."
+    },
+    {
+      "id": "test-bowl",
+      "name": "Test Bowl",
+      "difficulty": "blue",
+      "size": {
+        "w": 341,
+        "h": 341
+      },
+      "spacing": 3,
+      "props": 1944,
+      "order": 7,
+      "description": ""
+    }
+  ]
+}
